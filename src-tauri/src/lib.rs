@@ -39,8 +39,34 @@ fn setup_telegram_events(app: &tauri::App, client: Arc<TelegramClient>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logging
+    // Initialize logging first
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    // Load .env file - try multiple locations
+    let env_paths = [
+        std::path::PathBuf::from(".env"),
+        std::path::PathBuf::from("../.env"),  // When running from src-tauri
+    ];
+
+    let mut env_loaded = false;
+    for path in &env_paths {
+        if path.exists() {
+            match dotenvy::from_path(path) {
+                Ok(_) => {
+                    log::info!("Loaded .env from: {:?}", path.canonicalize().unwrap_or(path.clone()));
+                    env_loaded = true;
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("Failed to load .env from {:?}: {}", path, e);
+                }
+            }
+        }
+    }
+
+    if !env_loaded {
+        log::warn!("No .env file found. Using environment variables directly.");
+    }
 
     // Load config from environment
     let api_id: i32 = std::env::var("TELEGRAM_API_ID")
@@ -54,9 +80,15 @@ pub fn run() {
         .map(|s| s == "1" || s.to_lowercase() == "true")
         .unwrap_or(false);
 
+    log::info!("TELEGRAM_API_ID: {}", if api_id != 0 { api_id.to_string() } else { "(not set)".to_string() });
+    log::info!("TELEGRAM_API_HASH: {}", if !api_hash.is_empty() { format!("{}...", &api_hash[..8.min(api_hash.len())]) } else { "(not set)".to_string() });
+
     if api_id == 0 || api_hash.is_empty() {
         log::error!("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set!");
         log::error!("Get your credentials from https://my.telegram.org");
+        log::error!("Create a .env file in the project root with:");
+        log::error!("  TELEGRAM_API_ID=your_api_id");
+        log::error!("  TELEGRAM_API_HASH=your_api_hash");
     }
 
     // Create shared state - will be initialized with app data dir in setup

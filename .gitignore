@@ -47,3 +47,4 @@ dump.rdb
 
 # Claude
 .claude/
+*.session
