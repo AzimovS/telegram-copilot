@@ -6,7 +6,7 @@ mod utils;
 use commands::{auth, chats, contacts, outreach, scopes};
 use std::sync::Arc;
 use telegram::{TelegramClient, client::TdLibConfig};
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 
 fn setup_telegram_events(app: &tauri::App, client: Arc<TelegramClient>) {
     let app_handle = app.handle().clone();

@@ -1,5 +1,5 @@
 use crate::db::contacts as db_contacts;
-use crate::telegram::{TelegramClient, client::User};
+use crate::telegram::TelegramClient;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use std::sync::Arc;

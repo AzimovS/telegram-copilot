@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock, broadcast};
+use tokio::sync::{RwLock, broadcast};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +207,9 @@ impl TelegramClient {
             // tdlib::functions::check_authentication_code(code)
         }
 
+        #[cfg(not(feature = "tdlib-integration"))]
+        let _ = code;
+
         // For now, simulate success
         // In real implementation, this might transition to WaitPassword or Ready
         self.set_auth_state(AuthState::Ready).await;
@@ -233,6 +236,9 @@ impl TelegramClient {
             // Real implementation:
             // tdlib::functions::check_authentication_password(password)
         }
+
+        #[cfg(not(feature = "tdlib-integration"))]
+        let _ = password;
 
         self.set_auth_state(AuthState::Ready).await;
         Ok(())
@@ -290,6 +296,11 @@ impl TelegramClient {
         {
             // Real implementation:
             // tdlib::functions::get_chat_history(chat_id, from_message_id, offset, limit, only_local)
+        }
+
+        #[cfg(not(feature = "tdlib-integration"))]
+        {
+            let _ = (chat_id, limit, from_message_id);
         }
 
         // Return empty for now - real messages come from TDLib

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    tauri_temp_lib::run()
+    telegram_copilot_lib::run()
 }
