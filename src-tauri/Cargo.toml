@@ -27,11 +27,11 @@ log = "0.4"
 env_logger = "0.11"
 uuid = { version = "1", features = ["v4"] }
 
-# TDLib bindings - using tdlib crate
-# Note: This requires TDLib to be installed on the system
-# See: https://github.com/tdlib/td#building
-tdlib = { version = "0.4", optional = true }
+# Grammers - Pure Rust Telegram MTProto implementation
+grammers-client = "0.7"
+grammers-session = "0.7"
+grammers-tl-types = "0.7"
 
-[features]
-default = []
-tdlib-integration = ["tdlib"]
+# Async utilities
+async-trait = "0.1"
+futures = "0.3"

@@ -1,7 +1,11 @@
+use grammers_client::{Client, Config, InitParams, SignInError};
+use grammers_client::types::PasswordToken;
+use grammers_session::Session;
+use grammers_tl_types as tl;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
-use std::collections::HashMap;
+use tokio::sync::{broadcast, RwLock, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -85,52 +89,50 @@ pub enum TelegramEvent {
     Error(String),
 }
 
-/// Configuration for TDLib
+/// Configuration for Telegram client
 #[derive(Debug, Clone)]
-pub struct TdLibConfig {
+pub struct TelegramConfig {
     pub api_id: i32,
     pub api_hash: String,
-    pub database_directory: String,
-    pub files_directory: String,
+    pub session_file: PathBuf,
     pub use_test_dc: bool,
 }
 
-impl Default for TdLibConfig {
+impl Default for TelegramConfig {
     fn default() -> Self {
         Self {
-            api_id: 0, // Must be set from environment
+            api_id: 0,
             api_hash: String::new(),
-            database_directory: String::from("tdlib"),
-            files_directory: String::from("tdlib_files"),
+            session_file: PathBuf::from("telegram.session"),
             use_test_dc: false,
         }
     }
 }
 
 pub struct TelegramClient {
+    client: Arc<RwLock<Option<Client>>>,
     auth_state: Arc<RwLock<AuthState>>,
     current_user: Arc<RwLock<Option<User>>>,
-    chats: Arc<RwLock<HashMap<i64, Chat>>>,
-    users: Arc<RwLock<HashMap<i64, User>>>,
     event_tx: broadcast::Sender<TelegramEvent>,
-    config: TdLibConfig,
-    #[cfg(feature = "tdlib-integration")]
-    tdlib_client: Option<tdlib::Client>,
+    config: TelegramConfig,
+    login_token: Arc<Mutex<Option<grammers_client::types::LoginToken>>>,
+    password_token: Arc<Mutex<Option<PasswordToken>>>,
+    phone_number: Arc<RwLock<Option<String>>>,
 }
 
 impl TelegramClient {
-    pub fn new(config: TdLibConfig) -> Self {
+    pub fn new(config: TelegramConfig) -> Self {
         let (event_tx, _) = broadcast::channel(100);
 
         Self {
+            client: Arc::new(RwLock::new(None)),
             auth_state: Arc::new(RwLock::new(AuthState::WaitPhoneNumber)),
             current_user: Arc::new(RwLock::new(None)),
-            chats: Arc::new(RwLock::new(HashMap::new())),
-            users: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             config,
-            #[cfg(feature = "tdlib-integration")]
-            tdlib_client: None,
+            login_token: Arc::new(Mutex::new(None)),
+            password_token: Arc::new(Mutex::new(None)),
+            phone_number: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -158,37 +160,72 @@ impl TelegramClient {
         self.current_user.read().await.clone()
     }
 
-    /// Initialize TDLib and start receiving updates
-    #[cfg(feature = "tdlib-integration")]
-    pub async fn initialize(&mut self) -> Result<(), String> {
-        // Real TDLib initialization would go here
-        // This requires the tdlib crate and TDLib to be installed
-        log::info!("Initializing TDLib...");
+    /// Connect to Telegram and check if already authorized
+    pub async fn connect(&self) -> Result<bool, String> {
+        log::info!("Connecting to Telegram...");
 
-        // Set TDLib parameters
-        // Start update handler
-        // Handle authorization flow
+        let session = Session::load_file_or_create(&self.config.session_file)
+            .map_err(|e| format!("Failed to load session: {}", e))?;
 
-        Ok(())
-    }
+        let client = Client::connect(Config {
+            session,
+            api_id: self.config.api_id,
+            api_hash: self.config.api_hash.clone(),
+            params: InitParams::default(),
+        })
+        .await
+        .map_err(|e| format!("Failed to connect: {}", e))?;
 
-    #[cfg(not(feature = "tdlib-integration"))]
-    pub async fn initialize(&mut self) -> Result<(), String> {
-        log::info!("TDLib integration not enabled, using mock mode");
-        Ok(())
+        let is_authorized = client.is_authorized().await
+            .map_err(|e| format!("Failed to check auth: {}", e))?;
+
+        if is_authorized {
+            log::info!("Already authorized");
+
+            // Get current user info
+            if let Ok(me) = client.get_me().await {
+                let user = User {
+                    id: me.id(),
+                    first_name: me.first_name().to_string(),
+                    last_name: me.last_name().unwrap_or("").to_string(),
+                    username: me.username().map(|s| s.to_string()),
+                    phone_number: me.phone().map(|s| s.to_string()),
+                    profile_photo_url: None,
+                };
+                *self.current_user.write().await = Some(user);
+            }
+
+            self.set_auth_state(AuthState::Ready).await;
+        } else {
+            log::info!("Not authorized, need to login");
+            self.set_auth_state(AuthState::WaitPhoneNumber).await;
+        }
+
+        // Save session
+        if let Err(e) = client.session().save_to_file(&self.config.session_file) {
+            log::error!("Failed to save session: {}", e);
+        }
+
+        *self.client.write().await = Some(client);
+
+        Ok(is_authorized)
     }
 
     /// Send phone number for authentication
     pub async fn send_phone_number(&self, phone_number: &str) -> Result<(), String> {
         log::info!("Sending phone number: {}", phone_number);
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::set_authentication_phone_number(phone_number, settings)
-        }
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
 
-        // For now, simulate success and move to code verification
+        let token = client
+            .request_login_code(phone_number)
+            .await
+            .map_err(|e| format!("Failed to request code: {}", e))?;
+
+        *self.login_token.lock().await = Some(token);
+        *self.phone_number.write().await = Some(phone_number.to_string());
+
         self.set_auth_state(AuthState::WaitCode {
             phone_number: phone_number.to_string(),
         })
@@ -201,83 +238,195 @@ impl TelegramClient {
     pub async fn send_auth_code(&self, code: &str) -> Result<(), String> {
         log::info!("Sending auth code");
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::check_authentication_code(code)
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let mut token_guard = self.login_token.lock().await;
+        let login_token = token_guard.take().ok_or("No login token")?;
+
+        match client.sign_in(&login_token, code).await {
+            Ok(user) => {
+                log::info!("Signed in as: {}", user.first_name());
+
+                let current_user = User {
+                    id: user.id(),
+                    first_name: user.first_name().to_string(),
+                    last_name: user.last_name().unwrap_or("").to_string(),
+                    username: user.username().map(|s| s.to_string()),
+                    phone_number: self.phone_number.read().await.clone(),
+                    profile_photo_url: None,
+                };
+
+                *self.current_user.write().await = Some(current_user);
+
+                // Save session
+                if let Err(e) = client.session().save_to_file(&self.config.session_file) {
+                    log::error!("Failed to save session: {}", e);
+                }
+
+                self.set_auth_state(AuthState::Ready).await;
+                Ok(())
+            }
+            Err(SignInError::PasswordRequired(password_token)) => {
+                log::info!("2FA password required");
+                let hint = password_token.hint().unwrap_or("").to_string();
+
+                // Store the password token for later use
+                *self.password_token.lock().await = Some(password_token);
+
+                self.set_auth_state(AuthState::WaitPassword { hint: hint.clone() }).await;
+                // Return error to signal frontend to show password input
+                Err(format!("2FA required. Hint: {}", hint))
+            }
+            Err(SignInError::InvalidCode) => {
+                // Put the token back so they can try again
+                *token_guard = Some(login_token);
+                Err("Invalid code. Please try again.".to_string())
+            }
+            Err(e) => {
+                Err(format!("Sign in failed: {}", e))
+            }
         }
-
-        #[cfg(not(feature = "tdlib-integration"))]
-        let _ = code;
-
-        // For now, simulate success
-        // In real implementation, this might transition to WaitPassword or Ready
-        self.set_auth_state(AuthState::Ready).await;
-
-        // Set a mock user
-        *self.current_user.write().await = Some(User {
-            id: 12345,
-            first_name: "Demo".to_string(),
-            last_name: "User".to_string(),
-            username: Some("demo_user".to_string()),
-            phone_number: None,
-            profile_photo_url: None,
-        });
-
-        Ok(())
     }
 
     /// Send 2FA password
     pub async fn send_password(&self, password: &str) -> Result<(), String> {
         log::info!("Sending 2FA password");
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::check_authentication_password(password)
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let phone = self.phone_number.read().await.clone()
+            .ok_or("No phone number stored")?;
+
+        // Get the stored password token
+        let mut password_token_guard = self.password_token.lock().await;
+        let password_token = password_token_guard.take()
+            .ok_or("No password token stored. Please restart the login process.")?;
+
+        match client.check_password(password_token, password.to_string()).await {
+            Ok(user) => {
+                let current_user = User {
+                    id: user.id(),
+                    first_name: user.first_name().to_string(),
+                    last_name: user.last_name().unwrap_or("").to_string(),
+                    username: user.username().map(|s| s.to_string()),
+                    phone_number: Some(phone),
+                    profile_photo_url: None,
+                };
+
+                *self.current_user.write().await = Some(current_user);
+
+                if let Err(e) = client.session().save_to_file(&self.config.session_file) {
+                    log::error!("Failed to save session: {}", e);
+                }
+
+                self.set_auth_state(AuthState::Ready).await;
+                Ok(())
+            }
+            Err(e) => {
+                Err(format!("Password check failed: {}", e))
+            }
         }
-
-        #[cfg(not(feature = "tdlib-integration"))]
-        let _ = password;
-
-        self.set_auth_state(AuthState::Ready).await;
-        Ok(())
     }
 
     /// Logout from Telegram
     pub async fn logout(&self) -> Result<(), String> {
         log::info!("Logging out");
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::log_out()
+        let client_guard = self.client.read().await;
+        if let Some(client) = client_guard.as_ref() {
+            let _ = client.sign_out().await;
         }
 
-        self.set_auth_state(AuthState::WaitPhoneNumber).await;
+        // Delete session file
+        let _ = std::fs::remove_file(&self.config.session_file);
+
         *self.current_user.write().await = None;
-        self.chats.write().await.clear();
+        self.set_auth_state(AuthState::WaitPhoneNumber).await;
 
         Ok(())
     }
 
-    /// Get chat list
+    /// Get chat list (dialogs)
     pub async fn get_chats(&self, limit: i32) -> Result<Vec<Chat>, String> {
         log::info!("Getting chats, limit: {}", limit);
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::get_chats(chat_list, limit)
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let mut dialogs = client.iter_dialogs();
+        let mut chats = Vec::new();
+        let mut count = 0;
+
+        while let Some(dialog) = dialogs.next().await.map_err(|e| format!("Failed to get dialogs: {}", e))? {
+            if count >= limit {
+                break;
+            }
+
+            let chat = dialog.chat();
+            let chat_type = match chat {
+                grammers_client::types::Chat::User(_) => "private",
+                grammers_client::types::Chat::Group(_) => "group",
+                grammers_client::types::Chat::Channel(_) => "channel",
+            };
+
+            let title = match chat {
+                grammers_client::types::Chat::User(u) => {
+                    format!("{} {}", u.first_name(), u.last_name().unwrap_or(""))
+                }
+                grammers_client::types::Chat::Group(g) => g.title().to_string(),
+                grammers_client::types::Chat::Channel(c) => c.title().to_string(),
+            };
+
+            let last_message = dialog.last_message.as_ref().map(|msg| {
+                let text = msg.text();
+                let content = if !text.is_empty() {
+                    MessageContent::Text { text: text.to_string() }
+                } else if msg.photo().is_some() {
+                    MessageContent::Photo { caption: None }
+                } else {
+                    MessageContent::Unknown
+                };
+
+                Message {
+                    id: msg.id() as i64,
+                    chat_id: chat.id(),
+                    sender_id: msg.sender().map(|s| s.id()).unwrap_or(0),
+                    sender_name: msg.sender().map(|s| s.name().to_string()).unwrap_or_default(),
+                    content,
+                    date: msg.date().timestamp(),
+                    is_outgoing: msg.outgoing(),
+                    is_read: true,
+                }
+            });
+
+            // Get unread count from the raw dialog data
+            let unread_count = match &dialog.raw {
+                tl::enums::Dialog::Dialog(d) => d.unread_count,
+                tl::enums::Dialog::Folder(_) => 0,
+            };
+
+            let is_pinned = match &dialog.raw {
+                tl::enums::Dialog::Dialog(d) => d.pinned,
+                tl::enums::Dialog::Folder(_) => false,
+            };
+
+            chats.push(Chat {
+                id: chat.id(),
+                chat_type: chat_type.to_string(),
+                title: title.trim().to_string(),
+                unread_count,
+                is_pinned,
+                order: -(dialog.last_message.as_ref().map(|m| m.date().timestamp()).unwrap_or(0)),
+                photo: None,
+                last_message,
+            });
+
+            count += 1;
         }
 
-        // Return cached chats
-        let chats = self.chats.read().await;
-        let mut chat_list: Vec<Chat> = chats.values().cloned().collect();
-        chat_list.sort_by(|a, b| b.order.cmp(&a.order));
-        chat_list.truncate(limit as usize);
-
-        Ok(chat_list)
+        Ok(chats)
     }
 
     /// Get messages from a chat
@@ -285,47 +434,95 @@ impl TelegramClient {
         &self,
         chat_id: i64,
         limit: i32,
-        from_message_id: Option<i64>,
+        _from_message_id: Option<i64>,
     ) -> Result<Vec<Message>, String> {
-        log::info!(
-            "Getting messages for chat {}, limit: {}, from: {:?}",
-            chat_id, limit, from_message_id
-        );
+        log::info!("Getting messages for chat {}, limit: {}", chat_id, limit);
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::get_chat_history(chat_id, from_message_id, offset, limit, only_local)
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        // First, we need to get the chat
+        let mut dialogs = client.iter_dialogs();
+        let mut target_chat = None;
+
+        while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+            if dialog.chat().id() == chat_id {
+                target_chat = Some(dialog.chat);
+                break;
+            }
         }
 
-        #[cfg(not(feature = "tdlib-integration"))]
-        {
-            let _ = (chat_id, limit, from_message_id);
+        let chat = target_chat.ok_or("Chat not found")?;
+
+        let mut messages = Vec::new();
+        let mut history = client.iter_messages(&chat);
+        let mut count = 0;
+
+        while let Some(msg) = history.next().await.map_err(|e| e.to_string())? {
+            if count >= limit {
+                break;
+            }
+
+            let text = msg.text();
+            let content = if !text.is_empty() {
+                MessageContent::Text { text: text.to_string() }
+            } else if msg.photo().is_some() {
+                MessageContent::Photo { caption: None }
+            } else {
+                MessageContent::Unknown
+            };
+
+            messages.push(Message {
+                id: msg.id() as i64,
+                chat_id,
+                sender_id: msg.sender().map(|s| s.id()).unwrap_or(0),
+                sender_name: msg.sender().map(|s| s.name().to_string()).unwrap_or_default(),
+                content,
+                date: msg.date().timestamp(),
+                is_outgoing: msg.outgoing(),
+                is_read: true,
+            });
+
+            count += 1;
         }
 
-        // Return empty for now - real messages come from TDLib
-        Ok(vec![])
+        // Messages come newest first, reverse for chronological order
+        messages.reverse();
+        Ok(messages)
     }
 
     /// Send a text message
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<Message, String> {
-        log::info!("Sending message to chat {}: {}", chat_id, text);
+        log::info!("Sending message to chat {}", chat_id);
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // let content = tdlib::types::InputMessageContent::InputMessageText { ... };
-            // tdlib::functions::send_message(chat_id, 0, None, None, None, content)
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        // Find the chat
+        let mut dialogs = client.iter_dialogs();
+        let mut target_chat = None;
+
+        while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+            if dialog.chat().id() == chat_id {
+                target_chat = Some(dialog.chat);
+                break;
+            }
         }
 
-        // Create a mock message for demo
+        let chat = target_chat.ok_or("Chat not found")?;
+
+        let sent_msg = client
+            .send_message(&chat, text)
+            .await
+            .map_err(|e| format!("Failed to send message: {}", e))?;
+
         let message = Message {
-            id: chrono::Utc::now().timestamp(),
+            id: sent_msg.id() as i64,
             chat_id,
             sender_id: self.current_user.read().await.as_ref().map(|u| u.id).unwrap_or(0),
             sender_name: "You".to_string(),
             content: MessageContent::Text { text: text.to_string() },
-            date: chrono::Utc::now().timestamp(),
+            date: sent_msg.date().timestamp(),
             is_outgoing: true,
             is_read: false,
         };
@@ -334,88 +531,53 @@ impl TelegramClient {
         Ok(message)
     }
 
-    /// Get chat folders
-    pub async fn get_folders(&self) -> Result<Vec<Folder>, String> {
-        log::info!("Getting folders");
-
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::get_chat_folder_info()
-        }
-
-        // Return empty for now
-        Ok(vec![])
-    }
-
     /// Get contacts
     pub async fn get_contacts(&self) -> Result<Vec<User>, String> {
         log::info!("Getting contacts");
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::get_contacts()
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let contacts = client
+            .invoke(&tl::functions::contacts::GetContacts { hash: 0 })
+            .await
+            .map_err(|e| format!("Failed to get contacts: {}", e))?;
+
+        let mut users = Vec::new();
+
+        if let tl::enums::contacts::Contacts::Contacts(contacts) = contacts {
+            for user in contacts.users {
+                if let tl::enums::User::User(u) = user {
+                    users.push(User {
+                        id: u.id,
+                        first_name: u.first_name.unwrap_or_default(),
+                        last_name: u.last_name.unwrap_or_default(),
+                        username: u.username,
+                        phone_number: u.phone,
+                        profile_photo_url: None,
+                    });
+                }
+            }
         }
 
-        // Return cached users that are contacts
-        let users = self.users.read().await;
-        Ok(users.values().cloned().collect())
+        Ok(users)
     }
 
-    /// Search for chats and messages
-    pub async fn search(&self, query: &str, limit: i32) -> Result<Vec<Chat>, String> {
-        log::info!("Searching for: {}", query);
+    /// Get chat folders
+    pub async fn get_folders(&self) -> Result<Vec<Folder>, String> {
+        log::info!("Getting folders");
 
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::search_chats(query, limit)
-        }
+        let client_guard = self.client.read().await;
+        let _client = client_guard.as_ref().ok_or("Client not connected")?;
 
-        // Simple local search
-        let chats = self.chats.read().await;
-        let query_lower = query.to_lowercase();
-        let results: Vec<Chat> = chats
-            .values()
-            .filter(|c| c.title.to_lowercase().contains(&query_lower))
-            .take(limit as usize)
-            .cloned()
-            .collect();
-
-        Ok(results)
-    }
-
-    /// Mark messages as read
-    pub async fn mark_as_read(&self, chat_id: i64, message_ids: Vec<i64>) -> Result<(), String> {
-        log::info!("Marking {} messages as read in chat {}", message_ids.len(), chat_id);
-
-        #[cfg(feature = "tdlib-integration")]
-        {
-            // Real implementation:
-            // tdlib::functions::view_messages(chat_id, message_ids, source, force_read)
-        }
-
-        Ok(())
-    }
-
-    /// Update local chat cache
-    pub async fn update_chat(&self, chat: Chat) {
-        let mut chats = self.chats.write().await;
-        chats.insert(chat.id, chat.clone());
-        self.emit_event(TelegramEvent::ChatUpdated(chat));
-    }
-
-    /// Update local user cache
-    pub async fn update_user(&self, user: User) {
-        let mut users = self.users.write().await;
-        users.insert(user.id, user.clone());
-        self.emit_event(TelegramEvent::UserUpdated(user));
+        // For now, return empty folders - the API structure varies by grammers version
+        // This can be implemented properly once we verify the exact API
+        Ok(Vec::new())
     }
 }
 
 impl Default for TelegramClient {
     fn default() -> Self {
-        Self::new(TdLibConfig::default())
+        Self::new(TelegramConfig::default())
     }
 }

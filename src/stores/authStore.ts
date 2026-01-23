@@ -6,10 +6,13 @@ interface AuthStore {
   authState: AuthState;
   currentUser: User | null;
   isLoading: boolean;
+  isConnecting: boolean;
   error: string | null;
 
   // Actions
   setAuthState: (state: AuthState) => void;
+  setCurrentUser: (user: User | null) => void;
+  connect: () => Promise<void>;
   sendPhoneNumber: (phoneNumber: string) => Promise<void>;
   sendAuthCode: (code: string) => Promise<void>;
   sendPassword: (password: string) => Promise<void>;
@@ -22,9 +25,29 @@ export const useAuthStore = create<AuthStore>((set) => ({
   authState: { type: "waitPhoneNumber" },
   currentUser: null,
   isLoading: false,
+  isConnecting: true,
   error: null,
 
   setAuthState: (authState) => set({ authState }),
+  setCurrentUser: (currentUser) => set({ currentUser }),
+
+  connect: async () => {
+    set({ isConnecting: true, error: null });
+    try {
+      const isAuthorized = await tauri.connect();
+      if (isAuthorized) {
+        const user = await tauri.getCurrentUser();
+        set({ currentUser: user, authState: { type: "ready" } });
+      } else {
+        set({ authState: { type: "waitPhoneNumber" } });
+      }
+    } catch (error) {
+      console.error("Failed to connect:", error);
+      set({ error: String(error) });
+    } finally {
+      set({ isConnecting: false });
+    }
+  },
 
   sendPhoneNumber: async (phoneNumber) => {
     set({ isLoading: true, error: null });
@@ -42,8 +65,20 @@ export const useAuthStore = create<AuthStore>((set) => ({
     set({ isLoading: true, error: null });
     try {
       await tauri.sendAuthCode(code);
+      // If successful, we'll get a ready state via event
+      const user = await tauri.getCurrentUser();
+      set({ currentUser: user, authState: { type: "ready" } });
     } catch (error) {
-      set({ error: String(error) });
+      const errorStr = String(error);
+      // Check if this is a 2FA required error (not a real error)
+      if (errorStr.includes("2FA required")) {
+        // Extract hint from error message
+        const hintMatch = errorStr.match(/Hint: (.*)$/);
+        const hint = hintMatch ? hintMatch[1] : "";
+        set({ authState: { type: "waitPassword", hint }, error: null });
+      } else {
+        set({ error: errorStr });
+      }
     } finally {
       set({ isLoading: false });
     }
@@ -53,6 +88,8 @@ export const useAuthStore = create<AuthStore>((set) => ({
     set({ isLoading: true, error: null });
     try {
       await tauri.sendPassword(password);
+      const user = await tauri.getCurrentUser();
+      set({ currentUser: user, authState: { type: "ready" } });
     } catch (error) {
       set({ error: String(error) });
     } finally {
@@ -62,9 +99,13 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   checkAuthState: async () => {
     try {
-      const stateStr = await tauri.getAuthState();
-      const state = JSON.parse(stateStr) as AuthState;
+      const state = await tauri.getAuthState();
       set({ authState: state });
+
+      if (state.type === "ready") {
+        const user = await tauri.getCurrentUser();
+        set({ currentUser: user });
+      }
     } catch (error) {
       console.error("Failed to check auth state:", error);
     }

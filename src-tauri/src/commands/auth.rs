@@ -1,6 +1,14 @@
 use crate::telegram::TelegramClient;
+use crate::telegram::client::{AuthState, User};
 use tauri::State;
 use std::sync::Arc;
+
+#[tauri::command]
+pub async fn connect(
+    client: State<'_, Arc<TelegramClient>>,
+) -> Result<bool, String> {
+    client.connect().await
+}
 
 #[tauri::command]
 pub async fn send_phone_number(
@@ -29,9 +37,15 @@ pub async fn send_password(
 #[tauri::command]
 pub async fn get_auth_state(
     client: State<'_, Arc<TelegramClient>>,
-) -> Result<String, String> {
-    let state = client.get_auth_state().await;
-    serde_json::to_string(&state).map_err(|e| format!("Failed to serialize state: {}", e))
+) -> Result<AuthState, String> {
+    Ok(client.get_auth_state().await)
+}
+
+#[tauri::command]
+pub async fn get_current_user(
+    client: State<'_, Arc<TelegramClient>>,
+) -> Result<Option<User>, String> {
+    Ok(client.get_current_user().await)
 }
 
 #[tauri::command]

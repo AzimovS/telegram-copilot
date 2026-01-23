@@ -5,6 +5,7 @@ use tauri::State;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContactWithMetadata {
     pub user_id: i64,
     pub first_name: String,

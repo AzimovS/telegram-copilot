@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AuthState, User, Chat, Message } from "@/types/telegram";
+import type { Contact } from "@/types/contacts";
 
 // Auth commands
+export async function connect(): Promise<boolean> {
+  return invoke("connect");
+}
+
 export async function sendPhoneNumber(phoneNumber: string): Promise<void> {
   return invoke("send_phone_number", { phoneNumber });
 }
@@ -13,8 +19,12 @@ export async function sendPassword(password: string): Promise<void> {
   return invoke("send_password", { password });
 }
 
-export async function getAuthState(): Promise<string> {
+export async function getAuthState(): Promise<AuthState> {
   return invoke("get_auth_state");
+}
+
+export async function getCurrentUser(): Promise<User | null> {
+  return invoke("get_current_user");
 }
 
 export async function logout(): Promise<void> {
@@ -22,24 +32,24 @@ export async function logout(): Promise<void> {
 }
 
 // Chat commands
-export async function getChats(limit: number, offsetOrder?: number): Promise<unknown[]> {
-  return invoke("get_chats", { limit, offsetOrder });
+export async function getChats(limit: number): Promise<Chat[]> {
+  return invoke("get_chats", { limit });
 }
 
 export async function getChatMessages(
   chatId: number,
   limit: number,
   fromMessageId?: number
-): Promise<unknown[]> {
+): Promise<Message[]> {
   return invoke("get_chat_messages", { chatId, limit, fromMessageId });
 }
 
-export async function sendMessage(chatId: number, text: string): Promise<unknown> {
+export async function sendMessage(chatId: number, text: string): Promise<Message> {
   return invoke("send_message", { chatId, text });
 }
 
 // Contact commands
-export async function getContacts(): Promise<unknown[]> {
+export async function getContacts(): Promise<Contact[]> {
   return invoke("get_contacts");
 }
 
@@ -95,9 +105,4 @@ export async function getOutreachStatus(queueId: string): Promise<unknown> {
 
 export async function cancelOutreach(queueId: string): Promise<void> {
   return invoke("cancel_outreach", { queueId });
-}
-
-// Briefing commands
-export async function generateBriefing(chatIds: number[]): Promise<unknown> {
-  return invoke("generate_briefing", { chatIds });
 }

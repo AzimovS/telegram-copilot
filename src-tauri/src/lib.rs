@@ -4,8 +4,9 @@ mod telegram;
 mod utils;
 
 use commands::{auth, chats, contacts, outreach, scopes};
+use std::path::PathBuf;
 use std::sync::Arc;
-use telegram::{TelegramClient, client::TdLibConfig};
+use telegram::{TelegramClient, client::TelegramConfig};
 use tauri::{Manager, Emitter};
 
 fn setup_telegram_events(app: &tauri::App, client: Arc<TelegramClient>) {
@@ -39,24 +40,34 @@ fn setup_telegram_events(app: &tauri::App, client: Arc<TelegramClient>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // Load TDLib config from environment
-    let tdlib_config = TdLibConfig {
-        api_id: std::env::var("TELEGRAM_API_ID")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0),
-        api_hash: std::env::var("TELEGRAM_API_HASH").unwrap_or_default(),
-        database_directory: String::from("tdlib"),
-        files_directory: String::from("tdlib_files"),
-        use_test_dc: std::env::var("TELEGRAM_USE_TEST_DC")
-            .map(|s| s == "1" || s.to_lowercase() == "true")
-            .unwrap_or(false),
+    // Load config from environment
+    let api_id: i32 = std::env::var("TELEGRAM_API_ID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let api_hash = std::env::var("TELEGRAM_API_HASH").unwrap_or_default();
+
+    let use_test_dc = std::env::var("TELEGRAM_USE_TEST_DC")
+        .map(|s| s == "1" || s.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    if api_id == 0 || api_hash.is_empty() {
+        log::error!("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set!");
+        log::error!("Get your credentials from https://my.telegram.org");
+    }
+
+    // Create shared state - will be initialized with app data dir in setup
+    let telegram_config = TelegramConfig {
+        api_id,
+        api_hash,
+        session_file: PathBuf::from("telegram.session"), // Will be updated in setup
+        use_test_dc,
     };
 
-    // Create shared state
-    let telegram_client = Arc::new(TelegramClient::new(tdlib_config));
+    let telegram_client = Arc::new(TelegramClient::new(telegram_config));
     let outreach_manager = Arc::new(outreach::OutreachManager::new());
 
     tauri::Builder::default()
@@ -70,20 +81,39 @@ pub fn run() {
                 .app_data_dir()
                 .expect("Failed to get app data dir");
             std::fs::create_dir_all(&app_dir).expect("Failed to create app data dir");
-            db::init_db(app_dir).expect("Failed to initialize database");
+            db::init_db(app_dir.clone()).expect("Failed to initialize database");
+
+            log::info!("App data directory: {:?}", app_dir);
+            log::info!("Telegram Copilot started");
+            log::info!("API ID configured: {}", api_id != 0);
+            log::info!("Test DC: {}", use_test_dc);
 
             // Setup Telegram event forwarding to frontend
             setup_telegram_events(app, telegram_client.clone());
 
-            log::info!("Telegram Copilot started");
+            // Connect to Telegram in background
+            let client = telegram_client.clone();
+            tauri::async_runtime::spawn(async move {
+                match client.connect().await {
+                    Ok(authorized) => {
+                        log::info!("Telegram connected, authorized: {}", authorized);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to connect to Telegram: {}", e);
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             // Auth commands
+            auth::connect,
             auth::send_phone_number,
             auth::send_auth_code,
             auth::send_password,
             auth::get_auth_state,
+            auth::get_current_user,
             auth::logout,
             // Chat commands
             chats::get_chats,

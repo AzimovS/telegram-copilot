@@ -204,16 +204,36 @@ function BriefingView() {
   );
 }
 
+function LoadingScreen() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-background">
+      <div className="text-center space-y-4">
+        <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+        <div>
+          <h2 className="text-xl font-semibold">Connecting to Telegram</h2>
+          <p className="text-muted-foreground">Please wait...</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
-  const { authState, checkAuthState } = useAuthStore();
+  const { authState, isConnecting, connect } = useAuthStore();
   const [currentView, setCurrentView] = useState("chats");
 
   useTelegramEvents();
 
   useEffect(() => {
-    checkAuthState();
-  }, [checkAuthState]);
+    connect();
+  }, [connect]);
 
+  // Show loading screen while connecting
+  if (isConnecting) {
+    return <LoadingScreen />;
+  }
+
+  // Show login form if not authenticated
   if (authState.type !== "ready") {
     return <LoginForm />;
   }
