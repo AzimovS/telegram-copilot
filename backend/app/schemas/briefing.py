@@ -57,3 +57,37 @@ class SummaryResponse(BaseModel):
     summary: str
     generated_at: int
     cached: bool = False
+
+
+# Batch summary schemas
+class ChatSummaryContext(BaseModel):
+    chat_id: int
+    chat_title: str
+    chat_type: str
+    messages: list[ChatMessage]
+    unread_count: int = 0
+
+
+class ChatSummaryResult(BaseModel):
+    chat_id: int
+    chat_title: str
+    chat_type: str
+    summary: str
+    key_points: list[str]
+    action_items: list[str]
+    sentiment: str  # "positive", "neutral", "negative"
+    needs_response: bool
+    message_count: int
+    last_message_date: int
+
+
+class BatchSummaryRequest(BaseModel):
+    chats: list[ChatSummaryContext]
+    regenerate: bool = False
+
+
+class BatchSummaryResponse(BaseModel):
+    summaries: list[ChatSummaryResult]
+    total_count: int
+    generated_at: int
+    cached: bool = False

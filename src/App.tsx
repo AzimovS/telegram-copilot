@@ -5,14 +5,15 @@ import { useChats } from "@/hooks/useChats";
 import { useContacts } from "@/hooks/useContacts";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { Header } from "@/components/layout/Header";
+import { ViewHeader, type ViewType } from "@/components/layout/Header";
 import { ChatList } from "@/components/chats/ChatList";
-import { ChatPanel } from "@/components/chats/ChatPanel";
 import { ContactList } from "@/components/contacts/ContactList";
 import { TagManager } from "@/components/contacts/TagManager";
 import { NotesEditor } from "@/components/contacts/NotesEditor";
 import { OutreachPanel } from "@/components/outreach/OutreachPanel";
 import { SmartBriefing } from "@/components/briefing/SmartBriefing";
+import { SummaryView } from "@/components/summary/SummaryView";
+import { OffboardView } from "@/components/offboard/OffboardView";
 import {
   Card,
   CardContent,
@@ -20,45 +21,37 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { MessageSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import "@/styles/globals.css";
 
-function ChatsView() {
-  const {
-    chats,
-    selectedChat,
-    selectedChatId,
-    selectedChatMessages,
-    isLoadingChats,
-    isLoadingMessages,
-    selectChat,
-    loadMoreMessages,
-    sendMessage,
-  } = useChats();
+interface ViewProps {
+  onOpenChat: (chatId: number) => void;
+}
+
+function ChatsView({ onOpenChat }: ViewProps) {
+  const { chats, selectedChatId, selectChat, isLoadingChats } = useChats();
+
+  const handleSelectChat = (chatId: number) => {
+    selectChat(chatId);
+    onOpenChat(chatId);
+  };
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      <div className="w-80 border-r flex flex-col">
+      <div className="flex-1 flex flex-col">
         <ChatList
           chats={chats}
           selectedChatId={selectedChatId}
-          onSelectChat={selectChat}
+          onSelectChat={handleSelectChat}
           isLoading={isLoadingChats}
-        />
-      </div>
-      <div className="flex-1 flex flex-col">
-        <ChatPanel
-          chat={selectedChat}
-          messages={selectedChatMessages}
-          onSendMessage={sendMessage}
-          onLoadMore={loadMoreMessages}
-          isLoading={isLoadingMessages}
         />
       </div>
     </div>
   );
 }
 
-function ContactsView() {
+function ContactsView({ onOpenChat }: ViewProps) {
   const {
     contacts,
     selectedContact,
@@ -101,20 +94,26 @@ function ContactsView() {
         {selectedContact ? (
           <div className="p-6 space-y-6">
             {/* Contact Header */}
-            <div className="flex items-center gap-4">
-              <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center text-2xl font-medium text-primary">
-                {selectedContact.firstName[0]}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center text-2xl font-medium text-primary">
+                  {selectedContact.firstName[0]}
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold">
+                    {selectedContact.firstName} {selectedContact.lastName}
+                  </h2>
+                  {selectedContact.username && (
+                    <p className="text-muted-foreground">
+                      @{selectedContact.username}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div>
-                <h2 className="text-2xl font-bold">
-                  {selectedContact.firstName} {selectedContact.lastName}
-                </h2>
-                {selectedContact.username && (
-                  <p className="text-muted-foreground">
-                    @{selectedContact.username}
-                  </p>
-                )}
-              </div>
+              <Button onClick={() => onOpenChat(selectedContact.userId)}>
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Open Chat
+              </Button>
             </div>
 
             {/* Tags */}
@@ -182,24 +181,32 @@ function ContactsView() {
 function OutreachView() {
   return (
     <div className="flex flex-1 flex-col overflow-y-auto">
-      <Header title="Bulk Outreach" />
+      <ViewHeader title="Bulk Outreach" />
       <OutreachPanel />
     </div>
   );
 }
 
-function BriefingView() {
-  const { selectChat } = useChats();
-  const [, setCurrentView] = useState("chats");
-
-  const handleOpenChat = (chatId: number) => {
-    selectChat(chatId);
-    setCurrentView("chats");
-  };
-
+function BriefingView({ onOpenChat }: ViewProps) {
   return (
     <div className="flex flex-1 flex-col overflow-y-auto">
-      <SmartBriefing onOpenChat={handleOpenChat} />
+      <SmartBriefing onOpenChat={onOpenChat} />
+    </div>
+  );
+}
+
+function SummaryViewWrapper({ onOpenChat }: ViewProps) {
+  return (
+    <div className="flex flex-1 flex-col overflow-y-auto">
+      <SummaryView onOpenChat={onOpenChat} />
+    </div>
+  );
+}
+
+function OffboardViewWrapper({ onOpenChat }: ViewProps) {
+  return (
+    <div className="flex flex-1 flex-col overflow-y-auto">
+      <OffboardView onOpenChat={onOpenChat} />
     </div>
   );
 }
@@ -220,13 +227,22 @@ function LoadingScreen() {
 
 function App() {
   const { authState, isConnecting, connect } = useAuthStore();
-  const [currentView, setCurrentView] = useState("chats");
+  const [currentView, setCurrentView] = useState<ViewType>("briefing");
+  const [activeChatId, setActiveChatId] = useState<number | null>(null);
 
   useTelegramEvents();
 
   useEffect(() => {
     connect();
   }, [connect]);
+
+  const handleOpenChat = (chatId: number) => {
+    setActiveChatId(chatId);
+  };
+
+  const handleCloseChat = () => {
+    setActiveChatId(null);
+  };
 
   // Show loading screen while connecting
   if (isConnecting) {
@@ -240,21 +256,30 @@ function App() {
 
   const renderView = () => {
     switch (currentView) {
+      case "briefing":
+        return <BriefingView onOpenChat={handleOpenChat} />;
+      case "summary":
+        return <SummaryViewWrapper onOpenChat={handleOpenChat} />;
       case "chats":
-        return <ChatsView />;
+        return <ChatsView onOpenChat={handleOpenChat} />;
       case "contacts":
-        return <ContactsView />;
+        return <ContactsView onOpenChat={handleOpenChat} />;
       case "outreach":
         return <OutreachView />;
-      case "briefing":
-        return <BriefingView />;
+      case "offboard":
+        return <OffboardViewWrapper onOpenChat={handleOpenChat} />;
       default:
-        return <ChatsView />;
+        return <BriefingView onOpenChat={handleOpenChat} />;
     }
   };
 
   return (
-    <MainLayout currentView={currentView} onViewChange={setCurrentView}>
+    <MainLayout
+      currentView={currentView}
+      onViewChange={setCurrentView}
+      activeChatId={activeChatId}
+      onCloseChat={handleCloseChat}
+    >
       {renderView()}
     </MainLayout>
   );

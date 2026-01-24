@@ -7,6 +7,8 @@ from ..schemas.briefing import (
     ChatContext,
     ChatBriefing,
     MessageCategory,
+    ChatSummaryContext,
+    ChatSummaryResult,
 )
 
 settings = get_settings()
@@ -132,6 +134,125 @@ async def generate_chat_summary(
         ],
         temperature=0.3,
         max_tokens=200,
+    )
+
+    return response.choices[0].message.content.strip()
+
+
+DETAILED_SUMMARY_PROMPT = """You are an AI assistant that provides detailed summaries of Telegram conversations.
+
+Analyze the conversation and provide:
+1. A concise summary (2-3 sentences)
+2. Key points discussed (up to 3)
+3. Action items mentioned (up to 3)
+4. Overall sentiment: "positive", "neutral", or "negative"
+5. Whether the conversation needs a response from the user (true/false)
+
+Respond in JSON format:
+{
+  "summary": "string",
+  "key_points": ["string"],
+  "action_items": ["string"],
+  "sentiment": "positive" | "neutral" | "negative",
+  "needs_response": boolean
+}"""
+
+
+async def generate_detailed_summary(chat: ChatSummaryContext) -> ChatSummaryResult:
+    """Generate a detailed summary for a chat."""
+    openai_client = get_openai_client()
+
+    messages_text = "\n".join(
+        [
+            f"{'You' if msg.is_outgoing else msg.sender_name}: {msg.text}"
+            for msg in chat.messages[-30:]  # Last 30 messages
+        ]
+    )
+
+    user_prompt = f"""Analyze this conversation and provide a detailed summary:
+
+Chat: {chat.chat_title} ({chat.chat_type})
+
+Messages:
+{messages_text}
+
+Provide your analysis in JSON format."""
+
+    response = await openai_client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": DETAILED_SUMMARY_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.3,
+        max_tokens=600,
+    )
+
+    result = json.loads(response.choices[0].message.content)
+
+    return ChatSummaryResult(
+        chat_id=chat.chat_id,
+        chat_title=chat.chat_title,
+        chat_type=chat.chat_type,
+        summary=result["summary"],
+        key_points=result.get("key_points", []),
+        action_items=result.get("action_items", []),
+        sentiment=result.get("sentiment", "neutral"),
+        needs_response=result.get("needs_response", False),
+        message_count=len(chat.messages),
+        last_message_date=chat.messages[-1].date if chat.messages else 0,
+    )
+
+
+DRAFT_SYSTEM_PROMPT = """You are an AI assistant that generates helpful draft replies for Telegram conversations.
+
+Based on the conversation context, generate a friendly, appropriate reply that:
+- Matches the tone and style of the conversation
+- Addresses any questions or requests from the other person
+- Is concise and to the point
+- Sounds natural and human-like
+
+Do NOT:
+- Be overly formal unless the conversation is formal
+- Include placeholders like [name] or [topic]
+- Be robotic or generic
+- Make up information you don't know
+
+Just output the draft message text, nothing else."""
+
+
+async def generate_reply_draft(
+    chat_title: str,
+    messages: list,
+) -> str:
+    """Generate a draft reply for a chat conversation."""
+    openai_client = get_openai_client()
+
+    messages_text = "\n".join(
+        [
+            f"{'You' if msg.get('is_outgoing') else msg.get('sender_name', 'Them')}: {msg.get('text', '')}"
+            for msg in messages[-15:]  # Last 15 messages for context
+        ]
+    )
+
+    user_prompt = f"""Generate a draft reply for this conversation:
+
+Chat: {chat_title}
+
+Recent messages:
+{messages_text}
+
+Write a natural, helpful reply to continue this conversation."""
+
+    response = await openai_client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": DRAFT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.7,
+        max_tokens=300,
     )
 
     return response.choices[0].message.content.strip()

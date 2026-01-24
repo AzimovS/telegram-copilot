@@ -1,10 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CategoryGroup } from "./CategoryGroup";
-import type { BriefingItem } from "./BriefingCard";
-import { RefreshCw, Loader2, Clock, Sparkles, AlertCircle } from "lucide-react";
+import { StatsBar } from "./StatsBar";
+import { ResponseCard, type ResponseItem } from "./ResponseCard";
+import { FYIItem, type FYIItemData } from "./FYIItem";
+import { BriefingCard, type BriefingItem } from "./BriefingCard";
+import { RefreshCw, Loader2, Clock, Sparkles, AlertCircle, PartyPopper } from "lucide-react";
 import * as tauri from "@/lib/tauri";
+import { useAuthStore } from "@/stores/authStore";
 
 interface SmartBriefingProps {
   onOpenChat: (chatId: number) => void;
@@ -35,6 +38,9 @@ interface BriefingResponse {
     summary: string;
     key_points: string[];
     suggested_action?: string;
+    suggested_reply?: string;
+    last_message?: string;
+    last_message_sender?: string;
     unread_count: number;
     last_message_date: number;
   }>;
@@ -43,13 +49,16 @@ interface BriefingResponse {
 }
 
 export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
+  const { currentUser } = useAuthStore();
   const [briefings, setBriefings] = useState<BriefingItem[]>([]);
+  const [responseItems, setResponseItems] = useState<ResponseItem[]>([]);
+  const [fyiItems, setFyiItems] = useState<FYIItemData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isCached, setIsCached] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadBriefings = async (regenerate = false) => {
+  const loadBriefings = useCallback(async (regenerate = false) => {
     setIsLoading(true);
     setError(null);
 
@@ -60,6 +69,8 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
 
       if (unreadChats.length === 0) {
         setBriefings([]);
+        setResponseItems([]);
+        setFyiItems([]);
         setLastUpdated(new Date());
         setIsLoading(false);
         return;
@@ -69,10 +80,9 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
       const chatContexts: ChatContext[] = [];
 
       for (const chat of unreadChats.slice(0, 10)) {
-        // Limit to 10 chats
         try {
           const messages = await tauri.getChatMessages(chat.id, 20);
-          const recentMessages = messages.slice(-20); // Last 20 messages
+          const recentMessages = messages.slice(-20);
 
           chatContexts.push({
             chat_id: chat.id,
@@ -93,6 +103,8 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
 
       if (chatContexts.length === 0) {
         setBriefings([]);
+        setResponseItems([]);
+        setFyiItems([]);
         setLastUpdated(new Date());
         setIsLoading(false);
         return;
@@ -116,19 +128,48 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
 
       const data: BriefingResponse = await response.json();
 
-      // 4. Map to BriefingItem format
-      const items: BriefingItem[] = data.briefings.map((b) => ({
-        chatId: b.chat_id,
-        chatTitle: b.chat_title,
-        category: b.category,
-        summary: b.summary,
-        keyPoints: b.key_points,
-        suggestedAction: b.suggested_action,
-        unreadCount: b.unread_count,
-        lastMessageDate: b.last_message_date,
-      }));
+      // 4. Separate into categories
+      const urgent: BriefingItem[] = [];
+      const needsReply: ResponseItem[] = [];
+      const fyi: FYIItemData[] = [];
 
-      setBriefings(items);
+      for (const b of data.briefings) {
+        if (b.category === "urgent") {
+          urgent.push({
+            chatId: b.chat_id,
+            chatTitle: b.chat_title,
+            category: b.category,
+            summary: b.summary,
+            keyPoints: b.key_points,
+            suggestedAction: b.suggested_action,
+            unreadCount: b.unread_count,
+            lastMessageDate: b.last_message_date,
+          });
+        } else if (b.category === "needs_reply") {
+          needsReply.push({
+            chatId: b.chat_id,
+            chatTitle: b.chat_title,
+            summary: b.summary,
+            lastMessage: b.last_message,
+            lastMessageSender: b.last_message_sender,
+            suggestedReply: b.suggested_reply,
+            unreadCount: b.unread_count,
+            lastMessageDate: b.last_message_date,
+          });
+        } else {
+          fyi.push({
+            chatId: b.chat_id,
+            chatTitle: b.chat_title,
+            summary: b.summary,
+            unreadCount: b.unread_count,
+            lastMessageDate: b.last_message_date,
+          });
+        }
+      }
+
+      setBriefings(urgent);
+      setResponseItems(needsReply);
+      setFyiItems(fyi);
       setLastUpdated(new Date());
       setIsCached(data.cached);
     } catch (err) {
@@ -141,17 +182,28 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadBriefings();
-  }, []);
+  }, [loadBriefings]);
 
-  const urgentBriefings = briefings.filter((b) => b.category === "urgent");
-  const needsReplyBriefings = briefings.filter(
-    (b) => b.category === "needs_reply"
-  );
-  const fyiBriefings = briefings.filter((b) => b.category === "fyi");
+  const handleResponseSent = (chatId: number) => {
+    setResponseItems((prev) => prev.filter((item) => item.chatId !== chatId));
+  };
+
+  const urgentCount = briefings.length;
+  const needsReplyCount = responseItems.length;
+  const fyiCount = fyiItems.length;
+  const totalCount = urgentCount + needsReplyCount + fyiCount;
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    const name = currentUser?.firstName || "there";
+    if (hour < 12) return `Good morning, ${name}`;
+    if (hour < 17) return `Good afternoon, ${name}`;
+    return `Good evening, ${name}`;
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -162,9 +214,11 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
             <Sparkles className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold">Smart Briefing</h1>
+            <h1 className="text-2xl font-bold">{getGreeting()}</h1>
             <p className="text-sm text-muted-foreground">
-              AI-powered summary of your conversations
+              {totalCount > 0
+                ? `You have ${totalCount} conversation${totalCount !== 1 ? "s" : ""} to review`
+                : "All caught up!"}
             </p>
           </div>
         </div>
@@ -187,7 +241,7 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
               <RefreshCw className="h-4 w-4" />
             )}
             <span className="ml-2">
-              {isLoading ? "Analyzing..." : "Regenerate"}
+              {isLoading ? "Analyzing..." : "Refresh"}
             </span>
           </Button>
         </div>
@@ -208,7 +262,7 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
       )}
 
       {/* Loading State */}
-      {isLoading && briefings.length === 0 && (
+      {isLoading && totalCount === 0 && (
         <div className="flex flex-col items-center justify-center py-20">
           <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
           <p className="text-muted-foreground">
@@ -218,32 +272,91 @@ export function SmartBriefing({ onOpenChat }: SmartBriefingProps) {
       )}
 
       {/* Empty State */}
-      {!isLoading && !error && briefings.length === 0 && (
+      {!isLoading && !error && totalCount === 0 && (
         <div className="flex flex-col items-center justify-center py-20">
-          <Sparkles className="h-10 w-10 text-muted-foreground mb-4" />
-          <p className="text-muted-foreground">No unread messages to brief</p>
+          <PartyPopper className="h-12 w-12 text-primary mb-4" />
+          <h2 className="text-xl font-semibold mb-2">All caught up!</h2>
+          <p className="text-muted-foreground">No unread messages to review</p>
         </div>
       )}
 
-      {/* Briefing Categories */}
-      {briefings.length > 0 && (
-        <div className="space-y-8">
-          <CategoryGroup
-            category="urgent"
-            briefings={urgentBriefings}
-            onOpenChat={onOpenChat}
+      {/* Content */}
+      {totalCount > 0 && (
+        <>
+          {/* Stats Bar */}
+          <StatsBar
+            urgentCount={urgentCount}
+            needsReplyCount={needsReplyCount}
+            fyiCount={fyiCount}
           />
-          <CategoryGroup
-            category="needs_reply"
-            briefings={needsReplyBriefings}
-            onOpenChat={onOpenChat}
-          />
-          <CategoryGroup
-            category="fyi"
-            briefings={fyiBriefings}
-            onOpenChat={onOpenChat}
-          />
-        </div>
+
+          {/* Urgent Section */}
+          {urgentCount > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-red-500" />
+                <h2 className="font-semibold text-lg">Urgent</h2>
+                <span className="text-sm text-muted-foreground">
+                  ({urgentCount})
+                </span>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {briefings.map((briefing) => (
+                  <BriefingCard
+                    key={briefing.chatId}
+                    briefing={briefing}
+                    onOpenChat={() => onOpenChat(briefing.chatId)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Needs Reply Section */}
+          {needsReplyCount > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-yellow-500" />
+                <h2 className="font-semibold text-lg">Needs Reply</h2>
+                <span className="text-sm text-muted-foreground">
+                  ({needsReplyCount})
+                </span>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {responseItems.map((item) => (
+                  <ResponseCard
+                    key={item.chatId}
+                    item={item}
+                    onOpenChat={() => onOpenChat(item.chatId)}
+                    onSent={() => handleResponseSent(item.chatId)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* FYI Section */}
+          {fyiCount > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-blue-500 text-lg">ℹ️</span>
+                <h2 className="font-semibold text-lg">For Your Information</h2>
+                <span className="text-sm text-muted-foreground">
+                  ({fyiCount})
+                </span>
+              </div>
+              <div className="space-y-2">
+                {fyiItems.map((item) => (
+                  <FYIItem
+                    key={item.chatId}
+                    item={item}
+                    onOpenChat={() => onOpenChat(item.chatId)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

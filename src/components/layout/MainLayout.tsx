@@ -1,20 +1,45 @@
-import { Sidebar } from "./Sidebar";
+import { NavHeader, ViewType } from "./Header";
+import { ChatPanel } from "../chat/ChatPanel";
+import { cn } from "@/lib/utils";
 
 interface MainLayoutProps {
   children: React.ReactNode;
-  currentView: string;
-  onViewChange: (view: string) => void;
+  currentView: ViewType;
+  onViewChange: (view: ViewType) => void;
+  activeChatId: number | null;
+  onCloseChat: () => void;
 }
 
 export function MainLayout({
   children,
   currentView,
   onViewChange,
+  activeChatId,
+  onCloseChat,
 }: MainLayoutProps) {
+  const isChatOpen = activeChatId !== null;
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
-      <Sidebar currentView={currentView} onViewChange={onViewChange} />
-      <main className="flex flex-1 flex-col overflow-hidden">{children}</main>
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
+      <NavHeader currentView={currentView} onViewChange={onViewChange} />
+
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Main Content */}
+        <main
+          className={cn(
+            "flex flex-1 flex-col overflow-hidden transition-all duration-300",
+            isChatOpen && "mr-[400px]"
+          )}
+        >
+          {children}
+        </main>
+
+        {/* Chat Panel */}
+        <ChatPanel
+          chatId={activeChatId}
+          onClose={onCloseChat}
+        />
+      </div>
     </div>
   );
 }

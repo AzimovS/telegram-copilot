@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import briefing, summary
+from .routers import briefing, summary, draft
 
 settings = get_settings()
 
@@ -24,6 +24,7 @@ app.add_middleware(
 # Include routers
 app.include_router(briefing.router, prefix="/api/briefing", tags=["briefing"])
 app.include_router(summary.router, prefix="/api/summary", tags=["summary"])
+app.include_router(draft.router, prefix="/api/draft", tags=["draft"])
 
 
 @app.get("/health")
