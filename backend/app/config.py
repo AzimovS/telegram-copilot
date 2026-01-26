@@ -14,10 +14,17 @@ class Settings(BaseSettings):
 
     # Redis settings
     redis_url: str = "redis://localhost:6379"
-    cache_ttl_seconds: int = 3600  # 1 hour
+    cache_ttl_seconds: int = 21600  # 6 hours
 
     # CORS settings
-    cors_origins: list[str] = ["http://localhost:1420", "tauri://localhost"]
+    cors_origins: list[str] = [
+        "http://localhost:1420",
+        "http://localhost:5173",
+        "http://127.0.0.1:1420",
+        "http://127.0.0.1:5173",
+        "tauri://localhost",
+        "https://tauri.localhost",
+    ]
 
     class Config:
         env_file = ".env"

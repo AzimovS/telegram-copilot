@@ -69,9 +69,10 @@ async def generate_batch_summaries(request: BatchSummaryRequest):
     )
 
     if not request.regenerate:
-        cached = await cache.get_cached(cache_key)
-        if cached:
-            return BatchSummaryResponse(**cached, cached=True)
+        cached_data = await cache.get_cached(cache_key)
+        if cached_data:
+            cached_data["cached"] = True
+            return BatchSummaryResponse(**cached_data)
 
     # Generate summaries for each chat in parallel
     async def process_chat(chat_context):
