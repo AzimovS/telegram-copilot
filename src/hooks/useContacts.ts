@@ -5,21 +5,36 @@ export function useContacts() {
   const {
     contacts,
     selectedContactId,
+    selectedIds,
     filters,
     sortField,
     sortDirection,
+    sortOption,
     allTags,
     isLoading,
+    isRefreshing,
+    isDeleting,
     error,
+    warning,
+    cached,
+    cacheAge,
     loadContacts,
     selectContact,
+    toggleSelectId,
+    selectAllFiltered,
+    clearSelection,
     addTag,
     removeTag,
+    bulkAddTag,
+    deleteContacts,
     updateNotes,
     setFilters,
     setSorting,
+    setSortOption,
     clearError,
+    clearWarning,
     getFilteredContacts,
+    getNeverContactedCount,
   } = useContactStore();
 
   // Load contacts on mount
@@ -39,24 +54,45 @@ export function useContacts() {
   // Get selected contact
   const selectedContact = contacts.find((c) => c.userId === selectedContactId) || null;
 
+  // Get never contacted count
+  const neverContactedCount = useMemo(() => getNeverContactedCount(), [
+    contacts,
+    getNeverContactedCount,
+  ]);
+
   return {
     contacts: filteredContacts,
     allContacts: contacts,
     selectedContact,
     selectedContactId,
+    selectedIds,
     filters,
     sortField,
     sortDirection,
+    sortOption,
     allTags,
     isLoading,
+    isRefreshing,
+    isDeleting,
     error,
+    warning,
+    cached,
+    cacheAge,
+    neverContactedCount,
     selectContact,
+    toggleSelectId,
+    selectAllFiltered,
+    clearSelection,
     addTag,
     removeTag,
+    bulkAddTag,
+    deleteContacts,
     updateNotes,
     setFilters,
     setSorting,
-    refresh: loadContacts,
+    setSortOption,
+    refresh: () => loadContacts(true),
     clearError,
+    clearWarning,
   };
 }

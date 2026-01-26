@@ -2,27 +2,15 @@ import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useTelegramEvents } from "@/hooks/useTelegram";
 import { useChats } from "@/hooks/useChats";
-import { useContacts } from "@/hooks/useContacts";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { ViewHeader, type ViewType } from "@/components/layout/Header";
 import { ChatList } from "@/components/chats/ChatList";
-import { ContactList } from "@/components/contacts/ContactList";
-import { TagManager } from "@/components/contacts/TagManager";
-import { NotesEditor } from "@/components/contacts/NotesEditor";
+import { ContactsView } from "@/components/contacts/ContactsView";
 import { OutreachPanel } from "@/components/outreach/OutreachPanel";
 import { BriefingView } from "@/components/briefing/BriefingView";
 import { SummaryView } from "@/components/summary/SummaryView";
 import { OffboardView } from "@/components/offboard/OffboardView";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { MessageSquare } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import "@/styles/globals.css";
 
 interface ViewProps {
@@ -51,129 +39,10 @@ function ChatsView({ onOpenChat }: ViewProps) {
   );
 }
 
-function ContactsView({ onOpenChat }: ViewProps) {
-  const {
-    contacts,
-    selectedContact,
-    selectedContactId,
-    filters,
-    sortField,
-    sortDirection,
-    allTags,
-    isLoading,
-    selectContact,
-    addTag,
-    removeTag,
-    updateNotes,
-    setFilters,
-    setSorting,
-  } = useContacts();
-
-  const [showFilters, setShowFilters] = useState(false);
-
+function ContactsViewWrapper({ onOpenChat }: ViewProps) {
   return (
-    <div className="flex flex-1 overflow-hidden">
-      {/* Contact List */}
-      <div className="w-80 border-r flex flex-col">
-        <ContactList
-          contacts={contacts}
-          selectedContactId={selectedContactId}
-          onSelectContact={selectContact}
-          searchQuery={filters.searchQuery}
-          onSearchChange={(query) => setFilters({ searchQuery: query })}
-          sortField={sortField}
-          sortDirection={sortDirection}
-          onSortChange={setSorting}
-          onFilterClick={() => setShowFilters(!showFilters)}
-          isLoading={isLoading}
-        />
-      </div>
-
-      {/* Contact Details */}
-      <div className="flex-1 flex flex-col overflow-y-auto">
-        {selectedContact ? (
-          <div className="p-6 space-y-6">
-            {/* Contact Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center text-2xl font-medium text-primary">
-                  {selectedContact.firstName[0]}
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold">
-                    {selectedContact.firstName} {selectedContact.lastName}
-                  </h2>
-                  {selectedContact.username && (
-                    <p className="text-muted-foreground">
-                      @{selectedContact.username}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <Button onClick={() => onOpenChat(selectedContact.userId)}>
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Open Chat
-              </Button>
-            </div>
-
-            {/* Tags */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Tags</CardTitle>
-                <CardDescription>
-                  Organize contacts with custom tags
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <TagManager
-                  tags={selectedContact.tags}
-                  allTags={allTags}
-                  onAddTag={(tag) => addTag(selectedContact.userId, tag)}
-                  onRemoveTag={(tag) => removeTag(selectedContact.userId, tag)}
-                />
-              </CardContent>
-            </Card>
-
-            {/* Notes */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Notes</CardTitle>
-                <CardDescription>
-                  Keep track of important details
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <NotesEditor
-                  notes={selectedContact.notes}
-                  onSave={(notes) => updateNotes(selectedContact.userId, notes)}
-                />
-              </CardContent>
-            </Card>
-
-            {/* Last Contact Info */}
-            {selectedContact.daysSinceContact !== undefined && (
-              <Card>
-                <CardContent className="py-4">
-                  <p className="text-sm text-muted-foreground">
-                    Last contacted{" "}
-                    <span className="font-medium text-foreground">
-                      {selectedContact.daysSinceContact === 0
-                        ? "today"
-                        : selectedContact.daysSinceContact === 1
-                        ? "yesterday"
-                        : `${selectedContact.daysSinceContact} days ago`}
-                    </span>
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-muted-foreground">
-            Select a contact to view details
-          </div>
-        )}
-      </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <ContactsView onOpenChat={onOpenChat} />
     </div>
   );
 }
@@ -268,7 +137,7 @@ function App() {
       case "chats":
         return <ChatsView onOpenChat={handleOpenChat} />;
       case "contacts":
-        return <ContactsView onOpenChat={handleOpenChat} />;
+        return <ContactsViewWrapper onOpenChat={handleOpenChat} />;
       case "outreach":
         return <OutreachView />;
       case "offboard":

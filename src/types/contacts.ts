@@ -9,6 +9,7 @@ export interface Contact {
   notes: string;
   lastContactDate?: number;
   daysSinceContact?: number;
+  unreadCount?: number;
 }
 
 export interface ContactTag {
@@ -21,14 +22,26 @@ export type ContactSortField =
   | "name"
   | "lastContact"
   | "daysSinceContact"
-  | "tagCount";
+  | "tagCount"
+  | "unread";
 
 export type SortDirection = "asc" | "desc";
+
+// Simplified sort options for the new UI
+export type ContactSortOption = "recent" | "name" | "unread";
 
 export interface ContactFilters {
   searchQuery: string;
   tags: string[];
+  selectedTag: string | null; // Single tag filter for new UI
   hasNotes: boolean | null;
   minDaysSinceContact: number | null;
   maxDaysSinceContact: number | null;
+}
+
+export interface ContactsResponse {
+  contacts: Contact[];
+  cached: boolean;
+  cacheAge?: string;
+  generatedAt?: number;
 }
