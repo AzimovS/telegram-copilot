@@ -6,10 +6,20 @@ import {
   Users,
   Send,
   UserMinus,
-  LogOut
+  LogOut,
+  Settings,
+  Sun,
+  Moon,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useAuthStore } from "@/stores/authStore";
+import { useThemeStore, type Theme } from "@/stores/themeStore";
 
 export type ViewType = "briefing" | "summary" | "chats" | "contacts" | "outreach" | "offboard";
 
@@ -27,8 +37,15 @@ const navItems: { id: ViewType; label: string; icon: React.ReactNode }[] = [
   { id: "offboard", label: "Offboard", icon: <UserMinus className="h-4 w-4" /> },
 ];
 
+const themeOptions: { id: Theme; label: string; icon: typeof Sun }[] = [
+  { id: "light", label: "Light", icon: Sun },
+  { id: "night-accent", label: "Night Accent", icon: Sparkles },
+  { id: "dark", label: "Dark", icon: Moon },
+];
+
 export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
   const { currentUser, logout } = useAuthStore();
+  const { theme, setTheme } = useThemeStore();
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -58,10 +75,10 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
           ))}
         </nav>
 
-        {/* User Info */}
-        <div className="flex items-center gap-3 shrink-0">
+        {/* User Info & Settings */}
+        <div className="flex items-center gap-2 shrink-0">
           {currentUser && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 mr-1">
               <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-medium text-primary">
                 {currentUser.firstName?.[0] || "U"}
               </div>
@@ -70,6 +87,40 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
               </span>
             </div>
           )}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="Settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-48">
+              <div className="space-y-3">
+                <h4 className="font-medium text-sm">Theme</h4>
+                <div className="space-y-1">
+                  {themeOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      onClick={() => setTheme(option.id)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent",
+                        theme === option.id && "bg-accent"
+                      )}
+                    >
+                      <option.icon className="h-4 w-4" />
+                      <span className="flex-1 text-left">{option.label}</span>
+                      {theme === option.id && (
+                        <Check className="h-4 w-4 text-primary" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
           <Button
             variant="ghost"
             size="icon"
