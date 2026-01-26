@@ -115,11 +115,12 @@ export function SummaryView({ onOpenChat }: SummaryViewProps) {
         return;
       }
 
-      // Get messages for each chat
+      // Get messages for each chat (with delay to avoid rate limits)
       const chatContexts = [];
-      for (const chat of paginatedChats) {
+      for (let i = 0; i < paginatedChats.length; i++) {
+        const chat = paginatedChats[i];
         try {
-          const messages = await tauri.getChatMessages(chat.id, 30);
+          const messages = await tauri.getChatMessages(chat.id, 20); // Reduced from 30
           chatContexts.push({
             chat_id: chat.id,
             chat_title: chat.title,
@@ -133,6 +134,10 @@ export function SummaryView({ onOpenChat }: SummaryViewProps) {
               is_outgoing: m.isOutgoing,
             })),
           });
+          // Small delay between requests to avoid rate limiting
+          if (i < paginatedChats.length - 1) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
         } catch (e) {
           console.warn(`Failed to get messages for chat ${chat.id}:`, e);
         }

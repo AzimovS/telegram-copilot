@@ -11,7 +11,7 @@ import { ContactList } from "@/components/contacts/ContactList";
 import { TagManager } from "@/components/contacts/TagManager";
 import { NotesEditor } from "@/components/contacts/NotesEditor";
 import { OutreachPanel } from "@/components/outreach/OutreachPanel";
-import { SmartBriefing } from "@/components/briefing/SmartBriefing";
+import { BriefingView } from "@/components/briefing/BriefingView";
 import { SummaryView } from "@/components/summary/SummaryView";
 import { OffboardView } from "@/components/offboard/OffboardView";
 import {
@@ -187,10 +187,15 @@ function OutreachView() {
   );
 }
 
-function BriefingView({ onOpenChat }: ViewProps) {
+function BriefingViewWrapper({ onOpenChat }: ViewProps) {
+  // BriefingView expects (chatId, chatName) but we only need chatId
+  const handleOpenChat = (chatId: number, _chatName: string) => {
+    onOpenChat(chatId);
+  };
+
   return (
     <div className="flex flex-1 flex-col overflow-y-auto">
-      <SmartBriefing onOpenChat={onOpenChat} />
+      <BriefingView onOpenChat={handleOpenChat} />
     </div>
   );
 }
@@ -257,7 +262,7 @@ function App() {
   const renderView = () => {
     switch (currentView) {
       case "briefing":
-        return <BriefingView onOpenChat={handleOpenChat} />;
+        return <BriefingViewWrapper onOpenChat={handleOpenChat} />;
       case "summary":
         return <SummaryViewWrapper onOpenChat={handleOpenChat} />;
       case "chats":
@@ -269,7 +274,7 @@ function App() {
       case "offboard":
         return <OffboardViewWrapper onOpenChat={handleOpenChat} />;
       default:
-        return <BriefingView onOpenChat={handleOpenChat} />;
+        return <BriefingViewWrapper onOpenChat={handleOpenChat} />;
     }
   };
 
