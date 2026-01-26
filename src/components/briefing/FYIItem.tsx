@@ -1,12 +1,13 @@
-import { cn } from "@/lib/utils";
-import { Info, ChevronRight } from "lucide-react";
-
-export interface FYIItemData {
-  chatId: number;
-  chatTitle: string;
+interface FYIItemData {
+  id: number;
+  chat_id: number;
+  chat_name: string;
+  chat_type: "dm" | "group" | "channel";
+  unread_count: number;
+  last_message: string | null;
+  last_message_date: string | null;
+  priority: "fyi";
   summary: string;
-  unreadCount: number;
-  lastMessageDate: number;
 }
 
 interface FYIItemProps {
@@ -15,48 +16,26 @@ interface FYIItemProps {
 }
 
 export function FYIItem({ item, onOpenChat }: FYIItemProps) {
-  const formatDate = (timestamp: number) => {
-    const date = new Date(timestamp * 1000);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffHours < 1) return "Just now";
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays === 1) return "Yesterday";
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-  };
-
   return (
     <button
       onClick={onOpenChat}
-      className={cn(
-        "w-full text-left p-3 rounded-lg border transition-colors",
-        "hover:bg-muted/50 hover:border-blue-500/30",
-        "border-blue-500/10 bg-blue-500/5"
-      )}
+      className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors grid grid-cols-[1fr_auto_2fr] gap-4 items-center"
     >
-      <div className="flex items-start gap-3">
-        <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="font-medium text-sm truncate">{item.chatTitle}</h4>
-            <span className="text-xs text-muted-foreground shrink-0">
-              {formatDate(item.lastMessageDate)}
-            </span>
-          </div>
-          <p className="text-sm text-muted-foreground line-clamp-2 mt-0.5">
-            {item.summary}
-          </p>
-        </div>
-        {item.unreadCount > 0 && (
-          <span className="text-xs bg-blue-500/20 text-blue-600 px-1.5 py-0.5 rounded shrink-0">
-            {item.unreadCount}
-          </span>
-        )}
-        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+      {/* Name (Left) */}
+      <div className="truncate">
+        <span className="font-medium">{item.chat_name}</span>
+      </div>
+
+      {/* Count (Center) */}
+      <div className="text-center">
+        <span className="text-sm bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+          {item.unread_count}
+        </span>
+      </div>
+
+      {/* Summary (Right) */}
+      <div className="truncate text-sm text-muted-foreground">
+        {item.summary || "No action needed"}
       </div>
     </button>
   );

@@ -3,9 +3,10 @@ use grammers_client::types::PasswordToken;
 use grammers_session::Session;
 use grammers_tl_types as tl;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock, Mutex};
+use tokio::sync::{broadcast, RwLock, Mutex, Semaphore};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -19,6 +20,7 @@ pub enum AuthState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: i64,
     pub first_name: String,
@@ -29,6 +31,7 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Chat {
     pub id: i64,
     #[serde(rename = "type")]
@@ -39,9 +42,11 @@ pub struct Chat {
     pub order: i64,
     pub photo: Option<String>,
     pub last_message: Option<Message>,
+    pub member_count: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: i64,
     pub chat_id: i64,
@@ -59,13 +64,17 @@ pub enum MessageContent {
     Text { text: String },
     Photo { caption: Option<String> },
     Video { caption: Option<String> },
-    Document { file_name: String },
+    Document {
+        #[serde(rename = "fileName")]
+        file_name: String,
+    },
     Voice { duration: i32 },
     Sticker { emoji: Option<String> },
     Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: i32,
     pub title: String,
@@ -118,6 +127,11 @@ pub struct TelegramClient {
     login_token: Arc<Mutex<Option<grammers_client::types::LoginToken>>>,
     password_token: Arc<Mutex<Option<PasswordToken>>>,
     phone_number: Arc<RwLock<Option<String>>>,
+    // Chat cache to avoid repeated GetDialogs calls
+    chat_cache: Arc<RwLock<HashMap<i64, grammers_client::types::Chat>>>,
+    cache_loaded: Arc<RwLock<bool>>,
+    // Semaphore to prevent concurrent dialog loading
+    dialog_semaphore: Arc<Semaphore>,
 }
 
 impl TelegramClient {
@@ -133,6 +147,9 @@ impl TelegramClient {
             login_token: Arc::new(Mutex::new(None)),
             password_token: Arc::new(Mutex::new(None)),
             phone_number: Arc::new(RwLock::new(None)),
+            chat_cache: Arc::new(RwLock::new(HashMap::new())),
+            cache_loaded: Arc::new(RwLock::new(false)),
+            dialog_semaphore: Arc::new(Semaphore::new(1)), // Only one dialog load at a time
         }
     }
 
@@ -348,6 +365,58 @@ impl TelegramClient {
         Ok(())
     }
 
+    /// Ensure the chat cache is loaded (with semaphore to prevent concurrent loads)
+    async fn ensure_cache_loaded(&self, limit: i32) -> Result<(), String> {
+        // Check if already loaded
+        if *self.cache_loaded.read().await {
+            return Ok(());
+        }
+
+        // Acquire semaphore to prevent concurrent loads
+        let _permit = self.dialog_semaphore.acquire().await
+            .map_err(|e| format!("Failed to acquire semaphore: {}", e))?;
+
+        // Double-check after acquiring lock
+        if *self.cache_loaded.read().await {
+            return Ok(());
+        }
+
+        log::info!("Loading chat cache...");
+
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let mut dialogs = client.iter_dialogs();
+        let mut cache = self.chat_cache.write().await;
+        let mut count = 0;
+
+        while let Some(dialog) = dialogs.next().await.map_err(|e| format!("Failed to get dialogs: {}", e))? {
+            if count >= limit {
+                break;
+            }
+
+            let chat = dialog.chat;
+            cache.insert(chat.id(), chat);
+            count += 1;
+        }
+
+        *self.cache_loaded.write().await = true;
+        log::info!("Chat cache loaded with {} chats", cache.len());
+
+        Ok(())
+    }
+
+    /// Get a chat from cache by ID
+    async fn get_cached_chat(&self, chat_id: i64) -> Option<grammers_client::types::Chat> {
+        self.chat_cache.read().await.get(&chat_id).cloned()
+    }
+
+    /// Invalidate the chat cache (call when chats might have changed)
+    pub async fn invalidate_cache(&self) {
+        *self.cache_loaded.write().await = false;
+        self.chat_cache.write().await.clear();
+    }
+
     /// Get chat list (dialogs)
     pub async fn get_chats(&self, limit: i32) -> Result<Vec<Chat>, String> {
         log::info!("Getting chats, limit: {}", limit);
@@ -355,9 +424,14 @@ impl TelegramClient {
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
+        // Acquire semaphore to prevent concurrent dialog loads
+        let _permit = self.dialog_semaphore.acquire().await
+            .map_err(|e| format!("Failed to acquire semaphore: {}", e))?;
+
         let mut dialogs = client.iter_dialogs();
         let mut chats = Vec::new();
         let mut count = 0;
+        let mut cache = self.chat_cache.write().await;
 
         while let Some(dialog) = dialogs.next().await.map_err(|e| format!("Failed to get dialogs: {}", e))? {
             if count >= limit {
@@ -412,6 +486,25 @@ impl TelegramClient {
                 tl::enums::Dialog::Folder(_) => false,
             };
 
+            // Extract member count from chat type
+            let member_count = match chat {
+                grammers_client::types::Chat::User(_) => None,
+                grammers_client::types::Chat::Group(g) => {
+                    // Basic groups have participant count in raw data
+                    match &g.raw {
+                        tl::enums::Chat::Chat(c) => Some(c.participants_count),
+                        _ => None,
+                    }
+                }
+                grammers_client::types::Chat::Channel(c) => {
+                    // Channels/supergroups: raw is directly a Channel struct
+                    c.raw.participants_count
+                }
+            };
+
+            // Cache the chat object for later use
+            cache.insert(chat.id(), dialog.chat.clone());
+
             chats.push(Chat {
                 id: chat.id(),
                 chat_type: chat_type.to_string(),
@@ -421,10 +514,14 @@ impl TelegramClient {
                 order: -(dialog.last_message.as_ref().map(|m| m.date().timestamp()).unwrap_or(0)),
                 photo: None,
                 last_message,
+                member_count,
             });
 
             count += 1;
         }
+
+        *self.cache_loaded.write().await = true;
+        log::info!("Chat cache updated with {} chats", cache.len());
 
         Ok(chats)
     }
@@ -438,21 +535,19 @@ impl TelegramClient {
     ) -> Result<Vec<Message>, String> {
         log::info!("Getting messages for chat {}, limit: {}", chat_id, limit);
 
+        // Try to get chat from cache first
+        let chat = match self.get_cached_chat(chat_id).await {
+            Some(c) => c,
+            None => {
+                // Cache miss - ensure cache is loaded
+                self.ensure_cache_loaded(200).await?;
+                self.get_cached_chat(chat_id).await
+                    .ok_or_else(|| format!("Chat {} not found in cache", chat_id))?
+            }
+        };
+
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
-
-        // First, we need to get the chat
-        let mut dialogs = client.iter_dialogs();
-        let mut target_chat = None;
-
-        while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
-            if dialog.chat().id() == chat_id {
-                target_chat = Some(dialog.chat);
-                break;
-            }
-        }
-
-        let chat = target_chat.ok_or("Chat not found")?;
 
         let mut messages = Vec::new();
         let mut history = client.iter_messages(&chat);
@@ -495,21 +590,19 @@ impl TelegramClient {
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<Message, String> {
         log::info!("Sending message to chat {}", chat_id);
 
+        // Get chat from cache
+        let chat = match self.get_cached_chat(chat_id).await {
+            Some(c) => c,
+            None => {
+                // Cache miss - ensure cache is loaded
+                self.ensure_cache_loaded(200).await?;
+                self.get_cached_chat(chat_id).await
+                    .ok_or_else(|| format!("Chat {} not found in cache", chat_id))?
+            }
+        };
+
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
-
-        // Find the chat
-        let mut dialogs = client.iter_dialogs();
-        let mut target_chat = None;
-
-        while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
-            if dialog.chat().id() == chat_id {
-                target_chat = Some(dialog.chat);
-                break;
-            }
-        }
-
-        let chat = target_chat.ok_or("Chat not found")?;
 
         let sent_msg = client
             .send_message(&chat, text)

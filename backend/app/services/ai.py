@@ -98,6 +98,85 @@ Provide your analysis in JSON format."""
     )
 
 
+BRIEFING_V2_SYSTEM_PROMPT = """You analyze Telegram chats and classify their priority.
+
+You will receive:
+- Chat messages (with sender, text, date, is_outgoing flag)
+- Pre-computed signals about the conversation
+
+CLASSIFICATION RULES:
+
+**URGENT** - Requires immediate action:
+- Contains: "urgent", "asap", "deadline", "emergency", "critical", "important"
+- Mentions specific dates/times for something due soon
+- Multiple rapid messages showing frustration or urgency
+
+**NEEDS_REPLY** - Someone is waiting for your response:
+- last_message_is_outgoing=false AND is_private_chat=true (they messaged you in DM)
+- has_unanswered_question=true (they asked a question you haven't answered)
+- Clear requests: "can you", "please", "let me know", "waiting for", "need your"
+- You're directly addressed or asked for input
+
+**FYI** - No action needed:
+- last_message_is_outgoing=true (you already replied)
+- Channel broadcasts or announcements
+- Group discussions where you're not addressed
+- Automated messages or notifications
+- General news/updates
+
+IMPORTANT: If last_message_is_outgoing=true, it's almost always FYI (you already responded).
+If is_private_chat=true AND last_message_is_outgoing=false, it's almost always NEEDS_REPLY.
+
+Respond in JSON:
+{
+  "priority": "urgent" | "needs_reply" | "fyi",
+  "summary": "1-2 sentence summary",
+  "suggested_reply": "natural reply text or null if fyi"
+}"""
+
+
+async def generate_briefing_v2(chat: ChatContext) -> dict:
+    """Generate a V2 briefing for a single chat with priority and suggested reply."""
+    openai_client = get_openai_client()
+
+    # Build signals section
+    signals = f"""SIGNALS:
+- unread_count: {chat.unread_count}
+- last_message_is_outgoing: {chat.last_message_is_outgoing}
+- has_unanswered_question: {chat.has_unanswered_question}
+- hours_since_last_activity: {chat.hours_since_last_activity:.1f}
+- is_private_chat: {chat.is_private_chat}
+"""
+
+    # Format messages for the prompt (last 10 for context)
+    messages_text = "\n".join(
+        [
+            f"[{'You' if msg.is_outgoing else msg.sender_name}]: {msg.text}"
+            for msg in chat.messages[-10:]
+        ]
+    )
+
+    user_prompt = f"""Chat: {chat.chat_title} ({chat.chat_type})
+
+{signals}
+MESSAGES:
+{messages_text}"""
+
+    response = await openai_client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": BRIEFING_V2_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.3,
+        max_tokens=500,
+    )
+
+    result = json.loads(response.choices[0].message.content)
+    return result
+
+
 SUMMARY_SYSTEM_PROMPT = """You are an AI assistant that summarizes Telegram chat conversations.
 Provide a concise, informative summary that captures the key points of the conversation.
 Focus on:

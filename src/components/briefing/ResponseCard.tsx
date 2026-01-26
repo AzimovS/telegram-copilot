@@ -1,191 +1,173 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-} from "@/components/ui/card";
-import {
-  Sparkles,
-  Send,
-  Loader2,
-  Check,
-  ExternalLink,
-} from "lucide-react";
-import * as tauri from "@/lib/tauri";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-export interface ResponseItem {
-  chatId: number;
-  chatTitle: string;
+interface ResponseItem {
+  id: number;
+  chat_id: number;
+  chat_name: string;
+  chat_type: "dm" | "group" | "channel";
+  unread_count: number;
+  last_message: string | null;
+  last_message_date: string | null;
+  priority: "urgent" | "needs_reply";
   summary: string;
-  lastMessage?: string;
-  lastMessageSender?: string;
-  suggestedReply?: string;
-  unreadCount: number;
-  lastMessageDate: number;
+  suggested_reply: string | null;
 }
 
 interface ResponseCardProps {
   item: ResponseItem;
-  onOpenChat: () => void;
-  onSent: () => void;
+  onOpenChat: (chatId: number, chatName: string) => void;
+  onSend: (chatId: number, message: string) => Promise<void>;
+  onDraft: (chatId: number) => Promise<string>;
+  onRemove: (chatId: number) => void;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+export function ResponseCard({
+  item,
+  onOpenChat,
+  onSend,
+  onDraft,
+  onRemove,
+}: ResponseCardProps) {
+  const [draft, setDraft] = useState(item.suggested_reply || "");
+  const [sending, setSending] = useState(false);
+  const [loadingDraft, setLoadingDraft] = useState(false);
+  const [sent, setSent] = useState(false);
 
-export function ResponseCard({ item, onOpenChat, onSent }: ResponseCardProps) {
-  const [draft, setDraft] = useState(item.suggestedReply || "");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [isSent, setIsSent] = useState(false);
+  const handleOpenChat = () => {
+    onOpenChat(item.chat_id, item.chat_name);
+  };
 
-  const handleGenerateDraft = async () => {
-    setIsGenerating(true);
+  const handleAIDraft = async () => {
+    setLoadingDraft(true);
     try {
-      // Get recent messages for context
-      const messages = await tauri.getChatMessages(item.chatId, 20);
-      const recentMessages = messages.slice(-10).map((m) => ({
-        sender_name: m.senderName,
-        text: m.content.type === "text" ? m.content.text : "[Media]",
-        is_outgoing: m.isOutgoing,
-      }));
-
-      const response = await fetch(`${API_URL}/api/draft/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: item.chatId,
-          chat_title: item.chatTitle,
-          messages: recentMessages,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setDraft(data.draft || "");
-      }
-    } catch (error) {
-      console.error("Failed to generate draft:", error);
+      const newDraft = await onDraft(item.chat_id);
+      setDraft(newDraft);
+    } catch (err) {
+      console.error("Failed to generate draft:", err);
     } finally {
-      setIsGenerating(false);
+      setLoadingDraft(false);
     }
   };
 
   const handleSend = async () => {
-    if (!draft.trim() || isSending) return;
+    if (!draft.trim() || sending) return;
 
-    setIsSending(true);
+    setSending(true);
     try {
-      await tauri.sendMessage(item.chatId, draft.trim());
-      setIsSent(true);
+      await onSend(item.chat_id, draft);
+      setSent(true);
       setTimeout(() => {
-        onSent();
+        onRemove(item.chat_id);
       }, 500);
-    } catch (error) {
-      console.error("Failed to send message:", error);
-    } finally {
-      setIsSending(false);
+    } catch (err) {
+      alert(`Failed to send: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setSending(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  if (isSent) {
+  // Sent state - show confirmation
+  if (sent) {
     return (
-      <Card className="border-green-500/20 bg-green-500/5">
-        <CardContent className="py-6 flex items-center justify-center gap-2 text-green-600">
-          <Check className="h-5 w-5" />
-          <span className="font-medium">Message Sent</span>
+      <Card className="bg-green-50 border-green-200">
+        <CardContent className="py-6 text-center">
+          <p className="text-green-700 font-medium">
+            ✅ Sent to {item.chat_name}
+          </p>
         </CardContent>
       </Card>
     );
   }
 
+  const chatTypeLabel = item.chat_type === "dm" ? "DM" : item.chat_type === "group" ? "Group" : "Channel";
+
   return (
-    <Card className="border-yellow-500/20">
+    <Card>
       <CardHeader className="pb-2">
+        {/* Card Title - Clickable */}
         <div className="flex items-start justify-between">
           <button
-            onClick={onOpenChat}
-            className="text-left hover:underline flex-1"
+            onClick={handleOpenChat}
+            className="text-left flex-1 hover:underline"
           >
-            <h3 className="font-semibold text-base">{item.chatTitle}</h3>
+            <h4 className="font-semibold">{item.chat_name}</h4>
+            <p className="text-xs text-muted-foreground">
+              {chatTypeLabel} · {item.unread_count} unread
+            </p>
           </button>
-          {item.unreadCount > 0 && (
-            <span className="text-xs bg-yellow-500 text-white px-2 py-0.5 rounded-full ml-2 shrink-0">
-              {item.unreadCount}
-            </span>
-          )}
+          {/* Priority Badge */}
+          <span
+            className={`text-xs px-2 py-1 rounded-full ${
+              item.priority === "urgent"
+                ? "bg-red-100 text-red-700"
+                : "bg-orange-100 text-orange-700"
+            }`}
+          >
+            {item.priority === "urgent" ? "🔴 Urgent" : "🟠 Reply"}
+          </span>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Summary */}
-        <p className="text-sm text-muted-foreground">{item.summary}</p>
 
-        {/* Last Message */}
-        {item.lastMessage && (
+      <CardContent className="space-y-3">
+        {/* Last Message - Clickable */}
+        {item.last_message && (
           <button
-            onClick={onOpenChat}
+            onClick={handleOpenChat}
             className="w-full text-left p-2 bg-muted/50 rounded text-sm hover:bg-muted transition-colors"
           >
-            <span className="font-medium text-xs text-muted-foreground">
-              {item.lastMessageSender}:
-            </span>
-            <p className="line-clamp-2 mt-0.5">{item.lastMessage}</p>
+            <p className="line-clamp-2 text-muted-foreground">
+              "{item.last_message}"
+            </p>
           </button>
         )}
 
-        {/* Reply Draft */}
-        <div className="space-y-2">
-          <Textarea
-            value={draft}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-              setDraft(e.target.value)
-            }
-            onKeyDown={handleKeyDown}
-            placeholder="Type your reply..."
-            className="resize-none min-h-[60px] text-sm"
-            rows={2}
-          />
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleGenerateDraft}
-                disabled={isGenerating}
-              >
-                {isGenerating ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <Sparkles className="h-3 w-3 mr-1" />
-                )}
-                AI
-              </Button>
-              <Button variant="ghost" size="sm" onClick={onOpenChat}>
-                <ExternalLink className="h-3 w-3 mr-1" />
-                Open
-              </Button>
-            </div>
+        {/* AI Summary */}
+        {item.summary && (
+          <div className="text-sm text-muted-foreground">
+            <span className="font-medium">AI:</span> {item.summary}
+          </div>
+        )}
+
+        {/* Draft Textarea */}
+        <Textarea
+          value={draft}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+            setDraft(e.target.value)
+          }
+          placeholder="Your reply..."
+          className="resize-none text-sm"
+          rows={2}
+        />
+
+        {/* Card Actions */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {/* AI Button */}
             <Button
+              variant="outline"
               size="sm"
-              onClick={handleSend}
-              disabled={!draft.trim() || isSending}
+              onClick={handleAIDraft}
+              disabled={loadingDraft}
             >
-              {isSending ? (
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-              ) : (
-                <Send className="h-3 w-3 mr-1" />
-              )}
-              Send
+              {loadingDraft ? "⏳" : "✨ AI"}
+            </Button>
+
+            {/* Open Button */}
+            <Button variant="outline" size="sm" onClick={handleOpenChat}>
+              💬 Open
             </Button>
           </div>
+
+          {/* Send Button */}
+          <Button
+            size="sm"
+            onClick={handleSend}
+            disabled={!draft.trim() || sending}
+          >
+            {sending ? "⏳" : "📨 Send"}
+          </Button>
         </div>
       </CardContent>
     </Card>

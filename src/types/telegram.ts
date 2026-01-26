@@ -16,6 +16,7 @@ export interface Chat {
   isPinned: boolean;
   order: number;
   photo?: string;
+  memberCount?: number;
 }
 
 export type ChatType = "private" | "group" | "supergroup" | "channel" | "secret";

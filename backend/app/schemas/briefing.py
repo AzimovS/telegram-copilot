@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 
 
 class MessageCategory(str, Enum):
@@ -22,6 +22,13 @@ class ChatContext(BaseModel):
     chat_title: str
     chat_type: str
     messages: list[ChatMessage]
+
+    # Pre-computed signals (optional for backwards compat)
+    unread_count: int = 0
+    last_message_is_outgoing: bool = False
+    has_unanswered_question: bool = False
+    hours_since_last_activity: float = 0
+    is_private_chat: bool = False
 
 
 class BriefingRequest(BaseModel):
@@ -91,3 +98,55 @@ class BatchSummaryResponse(BaseModel):
     total_count: int
     generated_at: int
     cached: bool = False
+
+
+# New Briefing V2 schemas (matching specification)
+class Priority(str, Enum):
+    URGENT = "urgent"
+    NEEDS_REPLY = "needs_reply"
+    FYI = "fyi"
+
+
+class ResponseItem(BaseModel):
+    id: int
+    chat_id: int
+    chat_name: str
+    chat_type: str  # 'dm' | 'group' | 'channel'
+    unread_count: int
+    last_message: Optional[str] = None
+    last_message_date: Optional[str] = None  # ISO datetime
+    priority: Priority
+    summary: str
+    suggested_reply: Optional[str] = None
+
+
+class FYIItem(BaseModel):
+    id: int
+    chat_id: int
+    chat_name: str
+    chat_type: str
+    unread_count: int
+    last_message: Optional[str] = None
+    last_message_date: Optional[str] = None
+    priority: Priority = Priority.FYI
+    summary: str
+
+
+class BriefingStats(BaseModel):
+    needs_response_count: int
+    fyi_count: int
+    total_unread: int
+
+
+class BriefingV2Response(BaseModel):
+    needs_response: List[ResponseItem]
+    fyi_summaries: List[FYIItem]
+    stats: BriefingStats
+    generated_at: str  # ISO datetime
+    cached: bool = False
+    cache_age: Optional[str] = None  # "1h ago", "2d ago", etc.
+
+
+class BriefingV2Request(BaseModel):
+    chats: List[ChatContext]
+    force_refresh: bool = False
