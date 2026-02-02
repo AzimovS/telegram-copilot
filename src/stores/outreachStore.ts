@@ -81,7 +81,6 @@ export const useOutreachStore = create<OutreachStore>((set, get) => ({
 
   startOutreach: async () => {
     const { template, selectedRecipientIds } = get();
-    console.log("[Outreach] Starting with", selectedRecipientIds.length, "recipients");
 
     if (!template.trim() || selectedRecipientIds.length === 0) {
       set({ error: "Template and recipients are required" });
@@ -90,20 +89,16 @@ export const useOutreachStore = create<OutreachStore>((set, get) => ({
 
     set({ isLoading: true, error: null });
     try {
-      console.log("[Outreach] Calling queueOutreachMessages...");
       const queueId = await tauri.queueOutreachMessages(
         selectedRecipientIds,
         template
       );
-      console.log("[Outreach] Queue created:", queueId);
       const status = (await tauri.getOutreachStatus(queueId)) as OutreachQueue;
-      console.log("[Outreach] Status:", status);
       set({
         activeQueue: status,
         queues: [...get().queues, status],
       });
     } catch (error) {
-      console.error("[Outreach] Error:", error);
       set({ error: String(error) });
     } finally {
       set({ isLoading: false });

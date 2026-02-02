@@ -50,7 +50,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), String> {
             status TEXT NOT NULL DEFAULT 'pending',
             error TEXT,
             sent_at INTEGER,
-            FOREIGN KEY (queue_id) REFERENCES outreach_queue(id) ON DELETE CASCADE
+            FOREIGN KEY (queue_id) REFERENCES outreach_queue(id) ON DELETE CASCADE,
+            UNIQUE(queue_id, user_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_outreach_recipients_queue_id ON outreach_recipients(queue_id);

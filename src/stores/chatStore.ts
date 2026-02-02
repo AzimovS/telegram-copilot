@@ -16,6 +16,7 @@ interface ChatStore {
   loadMessages: (chatId: number, limit?: number, fromMessageId?: number) => Promise<void>;
   sendMessage: (chatId: number, text: string) => Promise<void>;
   addMessage: (message: Message) => void;
+  updateChat: (chat: Chat) => void;
   clearError: () => void;
 }
 
@@ -92,6 +93,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
       };
     });
+  },
+
+  updateChat: (chat) => {
+    set((state) => ({
+      chats: state.chats.map((c) => (c.id === chat.id ? chat : c)),
+    }));
   },
 
   clearError: () => set({ error: null }),

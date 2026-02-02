@@ -1,5 +1,6 @@
 pub mod schema;
 pub mod contacts;
+pub mod outreach;
 pub mod scopes;
 
 use rusqlite::Connection;

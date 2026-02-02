@@ -96,12 +96,15 @@ pub struct CommonChat {
     pub raw_chat: tl::enums::Chat,
 }
 
-/// Events emitted by the Telegram client
+/// Events emitted by the Telegram client.
+/// Note: Some variants (ChatUpdated, UserUpdated, Error) are set up for future
+/// real-time update handling. Handlers exist in lib.rs but emission isn't
+/// yet implemented for all update types.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum TelegramEvent {
     AuthStateChanged(AuthState),
     NewMessage(Message),
-    MessageUpdated(Message),
     ChatUpdated(Chat),
     UserUpdated(User),
     Error(String),
@@ -113,6 +116,9 @@ pub struct TelegramConfig {
     pub api_id: i32,
     pub api_hash: String,
     pub session_file: PathBuf,
+    /// Whether to use Telegram's test DC (not currently implemented).
+    /// TODO: Implement test DC support via grammers InitParams when needed.
+    #[allow(dead_code)]
     pub use_test_dc: bool,
 }
 
@@ -420,7 +426,9 @@ impl TelegramClient {
         self.chat_cache.read().await.get(&chat_id).cloned()
     }
 
-    /// Invalidate the chat cache (call when chats might have changed)
+    /// Invalidate the chat cache (call when chats might have changed).
+    /// TODO: Call this when receiving chat update events.
+    #[allow(dead_code)]
     pub async fn invalidate_cache(&self) {
         *self.cache_loaded.write().await = false;
         self.chat_cache.write().await.clear();
@@ -693,14 +701,18 @@ impl TelegramClient {
     }
 
     /// Get chat folders
+    ///
+    /// TODO: Implement folder support once grammers API is verified.
+    /// The grammers library's folder API may vary by version.
+    /// See: https://core.telegram.org/api/folders
     pub async fn get_folders(&self) -> Result<Vec<Folder>, String> {
-        log::info!("Getting folders");
+        log::info!("Getting folders (not implemented)");
 
         let client_guard = self.client.read().await;
         let _client = client_guard.as_ref().ok_or("Client not connected")?;
 
-        // For now, return empty folders - the API structure varies by grammers version
-        // This can be implemented properly once we verify the exact API
+        // Returns empty - folder enumeration requires raw MTProto calls
+        // that aren't directly exposed in the current grammers version
         Ok(Vec::new())
     }
 

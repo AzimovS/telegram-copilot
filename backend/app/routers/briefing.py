@@ -34,7 +34,8 @@ async def generate_briefing(request: BriefingRequest):
     if not request.regenerate:
         cached = await cache.get_cached(cache_key)
         if cached:
-            return BriefingResponse(**cached, cached=True)
+            cached["cached"] = True
+            return BriefingResponse(**cached)
 
     # Generate briefings for each chat in parallel
     async def process_chat(chat_context):

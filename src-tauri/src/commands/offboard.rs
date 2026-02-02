@@ -31,6 +31,9 @@ impl UserAccessHashCache {
         self.cache.read().await.get(&user_id).copied()
     }
 
+    /// Set a user's access hash in the cache.
+    /// Currently unused but kept for potential future manual cache updates.
+    #[allow(dead_code)]
     pub async fn set(&self, user_id: i64, access_hash: i64) {
         self.cache.write().await.insert(user_id, access_hash);
     }
