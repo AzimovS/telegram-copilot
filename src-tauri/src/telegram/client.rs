@@ -805,9 +805,12 @@ impl TelegramClient {
             }
             tl::enums::Chat::Channel(c) => {
                 // Channel/supergroup - use EditBanned with ban rights
+                let channel_access_hash = c.access_hash.ok_or_else(|| {
+                    format!("Channel {} is missing access_hash, cannot remove user", c.title)
+                })?;
                 let input_channel = tl::enums::InputChannel::Channel(tl::types::InputChannel {
                     channel_id: c.id,
-                    access_hash: c.access_hash.unwrap_or(0),
+                    access_hash: channel_access_hash,
                 });
 
                 let input_peer = tl::enums::InputPeer::User(tl::types::InputPeerUser {
