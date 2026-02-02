@@ -3,7 +3,7 @@ mod db;
 mod telegram;
 mod utils;
 
-use commands::{auth, chats, contacts, outreach, scopes};
+use commands::{auth, chats, contacts, offboard, outreach, scopes};
 use std::path::PathBuf;
 use std::sync::Arc;
 use telegram::{TelegramClient, client::TelegramConfig};
@@ -101,11 +101,15 @@ pub fn run() {
 
     let telegram_client = Arc::new(TelegramClient::new(telegram_config));
     let outreach_manager = Arc::new(outreach::OutreachManager::new());
+    let user_hash_cache = Arc::new(offboard::UserAccessHashCache::new());
+    let chat_data_cache = Arc::new(offboard::ChatDataCache::new());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(telegram_client.clone())
         .manage(outreach_manager)
+        .manage(user_hash_cache)
+        .manage(chat_data_cache)
         .setup(move |app| {
             // Initialize database
             let app_dir = app
@@ -167,6 +171,9 @@ pub fn run() {
             outreach::queue_outreach_messages,
             outreach::get_outreach_status,
             outreach::cancel_outreach,
+            // Offboard commands
+            offboard::get_common_groups,
+            offboard::remove_from_group,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
