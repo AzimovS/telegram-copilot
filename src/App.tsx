@@ -4,10 +4,10 @@ import { useTelegramEvents } from "@/hooks/useTelegram";
 import { useChats } from "@/hooks/useChats";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { ViewHeader, type ViewType } from "@/components/layout/Header";
+import type { ViewType } from "@/components/layout/Header";
 import { ChatList } from "@/components/chats/ChatList";
 import { ContactsView } from "@/components/contacts/ContactsView";
-import { OutreachPanel } from "@/components/outreach/OutreachPanel";
+import { OutreachView } from "@/components/outreach/OutreachView";
 import { BriefingView } from "@/components/briefing/BriefingView";
 import { SummaryView } from "@/components/summary/SummaryView";
 import { OffboardView } from "@/components/offboard/OffboardView";
@@ -47,11 +47,10 @@ function ContactsViewWrapper({ onOpenChat }: ViewProps) {
   );
 }
 
-function OutreachView() {
+function OutreachViewWrapper() {
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto">
-      <ViewHeader title="Bulk Outreach" />
-      <OutreachPanel />
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <OutreachView />
     </div>
   );
 }
@@ -139,7 +138,7 @@ function App() {
       case "contacts":
         return <ContactsViewWrapper onOpenChat={handleOpenChat} />;
       case "outreach":
-        return <OutreachView />;
+        return <OutreachViewWrapper />;
       case "offboard":
         return <OffboardViewWrapper onOpenChat={handleOpenChat} />;
       default:
