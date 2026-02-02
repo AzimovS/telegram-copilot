@@ -7,6 +7,7 @@ import type {
   SortDirection,
 } from "@/types/contacts";
 import * as tauri from "@/lib/tauri";
+import { getDefaultTags } from "./settingsStore";
 
 interface ContactStore {
   contacts: Contact[];
@@ -56,18 +57,6 @@ const defaultFilters: ContactFilters = {
   maxDaysSinceContact: null,
 };
 
-// Default tags that are always available
-const DEFAULT_TAGS = [
-  "investor",
-  "builder",
-  "enterprise",
-  "community",
-  "personal",
-  "colleague",
-  "candidate",
-  "defi",
-  "founder",
-];
 
 export const useContactStore = create<ContactStore>((set, get) => ({
   contacts: [],
@@ -129,9 +118,10 @@ export const useContactStore = create<ContactStore>((set, get) => ({
         return contact;
       });
 
-      // Merge default tags with tags from contacts
+      // Merge default tags (from settings) with tags from contacts
       const contactTags = contacts.flatMap((c) => c.tags);
-      const allTags = [...new Set([...DEFAULT_TAGS, ...contactTags])].sort();
+      const defaultTags = getDefaultTags();
+      const allTags = [...new Set([...defaultTags, ...contactTags])].sort();
 
       // For now, we don't have cache info from tauri, set as fresh
       set({

@@ -6,7 +6,7 @@ import type { AuthState, Chat, Message } from "@/types/telegram";
 
 export function useTelegramEvents() {
   const { setAuthState } = useAuthStore();
-  const { addMessage } = useChatStore();
+  const { addMessage, updateChat } = useChatStore();
 
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
@@ -23,8 +23,7 @@ export function useTelegramEvents() {
 
     // Listen for chat updates
     listen<Chat>("telegram://chat-updated", (event) => {
-      // Update chat in store
-      console.log("Chat updated:", event.payload);
+      updateChat(event.payload);
     }).then((unlisten) => unlisteners.push(unlisten));
 
     // Listen for errors
@@ -35,5 +34,5 @@ export function useTelegramEvents() {
     return () => {
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [setAuthState, addMessage]);
+  }, [setAuthState, addMessage, updateChat]);
 }

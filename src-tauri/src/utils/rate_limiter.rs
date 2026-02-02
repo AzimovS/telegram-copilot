@@ -67,7 +67,9 @@ impl RateLimiter {
         );
     }
 
-    /// Get the next time we can send (for queue scheduling)
+    /// Get the next time we can send (for queue scheduling).
+    /// TODO: Use this for smarter queue scheduling.
+    #[allow(dead_code)]
     pub fn next_available_time(&self, user_id: i64) -> Instant {
         // Check global flood wait
         let flood_until = *self.flood_wait_until.lock().unwrap();
@@ -87,7 +89,9 @@ impl RateLimiter {
         }
     }
 
-    /// Calculate wait time with exponential backoff for repeated failures
+    /// Calculate wait time with exponential backoff for repeated failures.
+    /// TODO: Use this for retry logic with backoff.
+    #[allow(dead_code)]
     pub fn backoff_time(&self, consecutive_failures: u32) -> Duration {
         let base_wait = self.min_interval_secs;
         let multiplier = 2u64.pow(consecutive_failures.min(6)); // Cap at 2^6 = 64x

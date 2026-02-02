@@ -1,7 +1,10 @@
 use super::with_db;
 use serde::{Deserialize, Serialize};
 
+/// Contact data structure for potential bulk operations.
+/// TODO: Implement bulk contact import/export using this struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ContactData {
     pub user_id: i64,
     pub tags: Vec<String>,
@@ -106,6 +109,9 @@ pub fn get_last_contact_date(user_id: i64) -> Result<Option<i64>, String> {
     })
 }
 
+/// Update the last contact date for a user.
+/// TODO: Call this from message event handler to track last contact dates.
+#[allow(dead_code)]
 pub fn update_last_contact_date(user_id: i64, date: i64) -> Result<(), String> {
     with_db(|conn| {
         conn.execute(

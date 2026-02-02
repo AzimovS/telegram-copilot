@@ -1,9 +1,11 @@
 mod commands;
 mod db;
+pub mod error;
 mod telegram;
 mod utils;
 
 use commands::{auth, chats, contacts, offboard, outreach, scopes};
+use utils::rate_limiter::RateLimiter;
 use std::path::PathBuf;
 use std::sync::Arc;
 use telegram::{TelegramClient, client::TelegramConfig};
@@ -31,7 +33,6 @@ fn setup_telegram_events(app: &tauri::App, client: Arc<TelegramClient>) {
                 telegram::client::TelegramEvent::Error(error) => {
                     let _ = app_handle.emit("telegram://error", error);
                 }
-                _ => {}
             }
         }
     });
@@ -101,28 +102,56 @@ pub fn run() {
 
     let telegram_client = Arc::new(TelegramClient::new(telegram_config));
     let outreach_manager = Arc::new(outreach::OutreachManager::new());
+    let outreach_manager_clone = outreach_manager.clone();
+    let rate_limiter = Arc::new(RateLimiter::new(60)); // 60 seconds min interval between messages
     let user_hash_cache = Arc::new(offboard::UserAccessHashCache::new());
     let chat_data_cache = Arc::new(offboard::ChatDataCache::new());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(telegram_client.clone())
-        .manage(outreach_manager)
+        .manage(outreach_manager.clone())
+        .manage(rate_limiter)
         .manage(user_hash_cache)
         .manage(chat_data_cache)
         .setup(move |app| {
             // Initialize database
-            let app_dir = app
-                .path()
-                .app_data_dir()
-                .expect("Failed to get app data dir");
-            std::fs::create_dir_all(&app_dir).expect("Failed to create app data dir");
-            db::init_db(app_dir.clone()).expect("Failed to initialize database");
+            let app_dir = match app.path().app_data_dir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    log::error!("Failed to get app data dir: {}", e);
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to get app data directory: {}", e),
+                    )));
+                }
+            };
+
+            if let Err(e) = std::fs::create_dir_all(&app_dir) {
+                log::error!("Failed to create app data dir: {}", e);
+                return Err(Box::new(e));
+            }
+
+            if let Err(e) = db::init_db(app_dir.clone()) {
+                log::error!("Failed to initialize database: {}", e);
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to initialize database: {}", e),
+                )));
+            }
 
             log::info!("App data directory: {:?}", app_dir);
             log::info!("Telegram Copilot started");
             log::info!("API ID configured: {}", api_id != 0);
             log::info!("Test DC: {}", use_test_dc);
+
+            // Restore outreach queues from database
+            let manager = outreach_manager_clone.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = manager.restore_from_db().await {
+                    log::error!("Failed to restore outreach queues: {}", e);
+                }
+            });
 
             // Setup Telegram event forwarding to frontend
             setup_telegram_events(app, telegram_client.clone());
