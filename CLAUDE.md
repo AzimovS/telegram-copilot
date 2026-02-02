@@ -36,6 +36,26 @@ cd backend && uvicorn app.main:app --reload --port 8000
 cd backend && docker-compose up
 ```
 
+## Testing
+
+```bash
+# Frontend tests (Vitest + React Testing Library)
+npm test              # Watch mode
+npm test -- --run     # Run once and exit
+
+# Python backend tests (pytest + fakeredis)
+cd backend && pytest -v
+
+# Rust tests
+cd src-tauri && cargo test
+
+# TypeScript type check
+npx tsc --noEmit
+
+# Run all tests before committing
+npm test -- --run && cd backend && pytest -v && cd .. && cd src-tauri && cargo check && cd .. && npx tsc --noEmit
+```
+
 ## Architecture
 
 ### Three-Tier Structure
