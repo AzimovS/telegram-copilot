@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useContacts } from "@/hooks/useContacts";
 import { SearchInput } from "@/components/common/SearchInput";
 import { Button } from "@/components/ui/button";
@@ -20,20 +20,11 @@ import {
   Ban,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getCommonGroups, removeFromGroup, type CommonGroup } from "@/lib/tauri";
 
 interface OffboardViewProps {
   onOpenChat: (chatId: number) => void;
 }
-
-interface CommonGroup {
-  id: number;
-  title: string;
-  canRemove: boolean;
-  memberCount?: number;
-}
-
-// Mock data for demo - in production this would come from backend
-const mockGroups: Record<number, CommonGroup[]> = {};
 
 export function OffboardView({ onOpenChat: _onOpenChat }: OffboardViewProps) {
   const { contacts, isLoading: isLoadingContacts } = useContacts();
@@ -45,6 +36,8 @@ export function OffboardView({ onOpenChat: _onOpenChat }: OffboardViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [lookupCount, setLookupCount] = useState(5);
   const [cachedUsers, setCachedUsers] = useState<Set<number>>(new Set());
+  // Cache for groups per user (persists during session)
+  const groupsCache = useRef<Map<number, CommonGroup[]>>(new Map());
 
   const filteredContacts = useMemo(() => {
     if (!searchQuery) return contacts;
@@ -66,59 +59,62 @@ export function OffboardView({ onOpenChat: _onOpenChat }: OffboardViewProps) {
     setSelectedUserId(userId);
     setError(null);
 
-    // Check if cached
+    // Check if cached locally
     if (cachedUsers.has(userId)) {
-      setGroups(mockGroups[userId] || []);
-      return;
+      const cached = groupsCache.current.get(userId);
+      if (cached) {
+        setGroups(cached);
+        return;
+      }
     }
 
     // Check rate limit
     if (lookupCount <= 0) {
-      setError("Daily lookup limit reached. Try again tomorrow.");
+      setError("Lookup limit reached. Refresh the page to reset.");
       return;
     }
 
     setIsLoadingGroups(true);
     try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // Call real Telegram API
+      const fetchedGroups = await getCommonGroups(userId);
 
-      // Mock data - in production this would call the backend
-      const mockGroupsForUser: CommonGroup[] = [
-        { id: 1, title: "Team Chat", canRemove: true, memberCount: 15 },
-        { id: 2, title: "Project Alpha", canRemove: true, memberCount: 8 },
-        { id: 3, title: "Company Announcements", canRemove: false, memberCount: 150 },
-        { id: 4, title: "Dev Team", canRemove: true, memberCount: 12 },
-      ];
-
-      mockGroups[userId] = mockGroupsForUser;
-      setGroups(mockGroupsForUser);
+      // Cache the result
+      groupsCache.current.set(userId, fetchedGroups);
+      setGroups(fetchedGroups);
       setCachedUsers((prev) => new Set([...prev, userId]));
       setLookupCount((prev) => prev - 1);
     } catch (err) {
-      setError("Failed to lookup groups. Please try again.");
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Failed to lookup groups: ${message}`);
     } finally {
       setIsLoadingGroups(false);
     }
   };
 
   const handleRemoveFromGroup = async (groupId: number) => {
+    if (!selectedUserId) return;
+
     setRemovingGroupId(groupId);
+    setError(null);
     try {
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Call real Telegram API to kick the user
+      await removeFromGroup(groupId, selectedUserId);
 
       // Remove from local state
       setGroups((prev) => prev.filter((g) => g.id !== groupId));
 
-      // Update mock data
-      if (selectedUserId && mockGroups[selectedUserId]) {
-        mockGroups[selectedUserId] = mockGroups[selectedUserId].filter(
-          (g) => g.id !== groupId
+      // Update cache
+      const cached = groupsCache.current.get(selectedUserId);
+      if (cached) {
+        groupsCache.current.set(
+          selectedUserId,
+          cached.filter((g) => g.id !== groupId)
         );
       }
     } catch (err) {
-      setError("Failed to remove user from group.");
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Failed to remove user: ${message}`);
     } finally {
       setRemovingGroupId(null);
     }
@@ -131,11 +127,16 @@ export function OffboardView({ onOpenChat: _onOpenChat }: OffboardViewProps) {
     setError(null);
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      // In production, this would force a fresh API call
+      // Force a fresh API call
+      const fetchedGroups = await getCommonGroups(selectedUserId);
+
+      // Update cache
+      groupsCache.current.set(selectedUserId, fetchedGroups);
+      setGroups(fetchedGroups);
       setLookupCount((prev) => prev - 1);
     } catch (err) {
-      setError("Failed to refresh groups.");
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Failed to refresh groups: ${message}`);
     } finally {
       setIsLoadingGroups(false);
     }

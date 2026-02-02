@@ -106,3 +106,19 @@ export async function getOutreachStatus(queueId: string): Promise<unknown> {
 export async function cancelOutreach(queueId: string): Promise<void> {
   return invoke("cancel_outreach", { queueId });
 }
+
+// Offboard commands
+export interface CommonGroup {
+  id: number;
+  title: string;
+  canRemove: boolean;
+  memberCount?: number;
+}
+
+export async function getCommonGroups(userId: number): Promise<CommonGroup[]> {
+  return invoke("get_common_groups", { userId });
+}
+
+export async function removeFromGroup(chatId: number, userId: number): Promise<void> {
+  return invoke("remove_from_group", { chatId, userId });
+}

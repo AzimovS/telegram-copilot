@@ -87,6 +87,15 @@ pub struct Folder {
     pub include_bots: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct CommonChat {
+    pub id: i64,
+    pub title: String,
+    pub member_count: Option<i32>,
+    pub can_remove: bool,
+    pub raw_chat: tl::enums::Chat,
+}
+
 /// Events emitted by the Telegram client
 #[derive(Debug, Clone)]
 pub enum TelegramEvent {
@@ -656,6 +665,33 @@ impl TelegramClient {
         Ok(users)
     }
 
+    /// Get contacts with their access hashes (needed for certain API calls)
+    pub async fn get_contacts_with_access_hash(&self) -> Result<Vec<(i64, i64)>, String> {
+        log::info!("Getting contacts with access hashes");
+
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let contacts = client
+            .invoke(&tl::functions::contacts::GetContacts { hash: 0 })
+            .await
+            .map_err(|e| format!("Failed to get contacts: {}", e))?;
+
+        let mut users = Vec::new();
+
+        if let tl::enums::contacts::Contacts::Contacts(contacts) = contacts {
+            for user in contacts.users {
+                if let tl::enums::User::User(u) = user {
+                    if let Some(access_hash) = u.access_hash {
+                        users.push((u.id, access_hash));
+                    }
+                }
+            }
+        }
+
+        Ok(users)
+    }
+
     /// Get chat folders
     pub async fn get_folders(&self) -> Result<Vec<Folder>, String> {
         log::info!("Getting folders");
@@ -666,6 +702,162 @@ impl TelegramClient {
         // For now, return empty folders - the API structure varies by grammers version
         // This can be implemented properly once we verify the exact API
         Ok(Vec::new())
+    }
+
+    /// Get common chats/groups with a specific user
+    pub async fn get_common_chats(&self, user_id: i64, access_hash: i64) -> Result<Vec<CommonChat>, String> {
+        log::info!("Getting common chats for user {}", user_id);
+
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let input_user = tl::enums::InputUser::User(tl::types::InputUser {
+            user_id,
+            access_hash,
+        });
+
+        let result = client
+            .invoke(&tl::functions::messages::GetCommonChats {
+                user_id: input_user,
+                max_id: 0,
+                limit: 100,
+            })
+            .await
+            .map_err(|e| format!("Failed to get common chats: {}", e))?;
+
+        let chats = match result {
+            tl::enums::messages::Chats::Chats(c) => c.chats,
+            tl::enums::messages::Chats::Slice(s) => s.chats,
+        };
+
+        // Get current user to check admin rights (reserved for future use)
+        let _me = client.get_me().await.map_err(|e| format!("Failed to get current user: {}", e))?;
+
+        let mut common_chats = Vec::new();
+        for chat in chats {
+            let (id, title, member_count, can_remove) = match &chat {
+                tl::enums::Chat::Chat(c) => {
+                    // Basic group - check if we're an admin
+                    let is_admin = c.admin_rights.is_some() || c.creator;
+                    (
+                        c.id,
+                        c.title.clone(),
+                        Some(c.participants_count),
+                        is_admin,
+                    )
+                }
+                tl::enums::Chat::Channel(c) => {
+                    // Channel/supergroup - check admin rights
+                    let is_admin = c.admin_rights.is_some() || c.creator;
+                    (
+                        c.id,
+                        c.title.clone(),
+                        c.participants_count,
+                        is_admin,
+                    )
+                }
+                tl::enums::Chat::Forbidden(c) => {
+                    (c.id, c.title.clone(), None, false)
+                }
+                tl::enums::Chat::ChannelForbidden(c) => {
+                    (c.id, c.title.clone(), None, false)
+                }
+                tl::enums::Chat::Empty(c) => {
+                    (c.id, String::new(), None, false)
+                }
+            };
+
+            common_chats.push(CommonChat {
+                id,
+                title,
+                member_count,
+                can_remove,
+                raw_chat: chat,
+            });
+        }
+
+        Ok(common_chats)
+    }
+
+    /// Remove (kick) a user from a chat
+    pub async fn kick_chat_member(&self, chat: &tl::enums::Chat, user_id: i64, access_hash: i64) -> Result<(), String> {
+        log::info!("Kicking user {} from chat", user_id);
+
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let input_user = tl::enums::InputUser::User(tl::types::InputUser {
+            user_id,
+            access_hash,
+        });
+
+        match chat {
+            tl::enums::Chat::Chat(c) => {
+                // Basic group - use DeleteChatUser
+                client
+                    .invoke(&tl::functions::messages::DeleteChatUser {
+                        chat_id: c.id,
+                        user_id: input_user,
+                        revoke_history: false,
+                    })
+                    .await
+                    .map_err(|e| format!("Failed to remove user from group: {}", e))?;
+            }
+            tl::enums::Chat::Channel(c) => {
+                // Channel/supergroup - use EditBanned with ban rights
+                let channel_access_hash = c.access_hash.ok_or_else(|| {
+                    format!("Channel {} is missing access_hash, cannot remove user", c.title)
+                })?;
+                let input_channel = tl::enums::InputChannel::Channel(tl::types::InputChannel {
+                    channel_id: c.id,
+                    access_hash: channel_access_hash,
+                });
+
+                let input_peer = tl::enums::InputPeer::User(tl::types::InputPeerUser {
+                    user_id,
+                    access_hash,
+                });
+
+                // Ban with view_messages = true to effectively kick
+                let banned_rights = tl::types::ChatBannedRights {
+                    view_messages: true,
+                    send_messages: true,
+                    send_media: true,
+                    send_stickers: true,
+                    send_gifs: true,
+                    send_games: true,
+                    send_inline: true,
+                    embed_links: true,
+                    send_polls: true,
+                    change_info: true,
+                    invite_users: true,
+                    pin_messages: true,
+                    manage_topics: true,
+                    send_photos: true,
+                    send_videos: true,
+                    send_roundvideos: true,
+                    send_audios: true,
+                    send_voices: true,
+                    send_docs: true,
+                    send_plain: true,
+                    until_date: 0, // Permanent
+                };
+
+                client
+                    .invoke(&tl::functions::channels::EditBanned {
+                        channel: input_channel,
+                        participant: input_peer,
+                        banned_rights: tl::enums::ChatBannedRights::Rights(banned_rights),
+                    })
+                    .await
+                    .map_err(|e| format!("Failed to ban user from channel: {}", e))?;
+            }
+            _ => {
+                return Err("Cannot remove user from this type of chat".to_string());
+            }
+        }
+
+        Ok(())
     }
 }
 
