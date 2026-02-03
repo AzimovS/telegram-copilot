@@ -191,11 +191,12 @@ export function ChatPanel({ chatId, chatName, chatType, onClose }: ChatPanelProp
                 msg.isOutgoing ? "ml-auto items-end" : "mr-auto items-start"
               )}
             >
-              {!msg.isOutgoing && (
-                <span className="text-xs text-muted-foreground mb-1">
-                  {msg.senderName}
-                </span>
-              )}
+              <span className={cn(
+                "text-xs font-medium mb-1",
+                msg.isOutgoing ? "text-primary" : "text-blue-600 dark:text-blue-400"
+              )}>
+                {msg.isOutgoing ? "You" : (msg.senderName || chat?.title || "User")}
+              </span>
               <div
                 className={cn(
                   "rounded-lg px-3 py-2 text-sm",

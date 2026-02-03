@@ -5,7 +5,7 @@ use grammers_tl_types as tl;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::{broadcast, RwLock, Mutex, Semaphore};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +183,7 @@ pub struct TelegramClient {
     auth_state: Arc<RwLock<AuthState>>,
     current_user: Arc<RwLock<Option<User>>>,
     event_tx: broadcast::Sender<TelegramEvent>,
-    config: TelegramConfig,
+    config: StdRwLock<TelegramConfig>,
     login_token: Arc<Mutex<Option<grammers_client::types::LoginToken>>>,
     password_token: Arc<Mutex<Option<PasswordToken>>>,
     phone_number: Arc<RwLock<Option<String>>>,
@@ -203,7 +203,7 @@ impl TelegramClient {
             auth_state: Arc::new(RwLock::new(AuthState::WaitPhoneNumber)),
             current_user: Arc::new(RwLock::new(None)),
             event_tx,
-            config,
+            config: StdRwLock::new(config),
             login_token: Arc::new(Mutex::new(None)),
             password_token: Arc::new(Mutex::new(None)),
             phone_number: Arc::new(RwLock::new(None)),
@@ -211,6 +211,11 @@ impl TelegramClient {
             cache_loaded: Arc::new(RwLock::new(false)),
             dialog_semaphore: Arc::new(Semaphore::new(1)), // Only one dialog load at a time
         }
+    }
+
+    /// Set the session file path (must be called before connect)
+    pub fn set_session_file(&self, path: PathBuf) {
+        self.config.write().unwrap().session_file = path;
     }
 
     /// Subscribe to Telegram events
@@ -241,13 +246,18 @@ impl TelegramClient {
     pub async fn connect(&self) -> Result<bool, String> {
         log::info!("Connecting to Telegram...");
 
-        let session = Session::load_file_or_create(&self.config.session_file)
+        let (session_file, api_id, api_hash) = {
+            let config = self.config.read().unwrap();
+            (config.session_file.clone(), config.api_id, config.api_hash.clone())
+        };
+
+        let session = Session::load_file_or_create(&session_file)
             .map_err(|e| format!("Failed to load session: {}", e))?;
 
         let client = Client::connect(Config {
             session,
-            api_id: self.config.api_id,
-            api_hash: self.config.api_hash.clone(),
+            api_id,
+            api_hash,
             params: InitParams::default(),
         })
         .await
@@ -279,7 +289,7 @@ impl TelegramClient {
         }
 
         // Save session - propagate errors to ensure session integrity
-        client.session().save_to_file(&self.config.session_file)
+        client.session().save_to_file(&session_file)
             .map_err(|e| format!("Failed to save session after connect: {}", e))?;
 
         *self.client.write().await = Some(client);
@@ -314,6 +324,8 @@ impl TelegramClient {
     pub async fn send_auth_code(&self, code: &str) -> Result<(), String> {
         log::info!("Sending auth code");
 
+        let session_file = self.config.read().unwrap().session_file.clone();
+
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -336,7 +348,7 @@ impl TelegramClient {
                 *self.current_user.write().await = Some(current_user);
 
                 // Save session - propagate errors to ensure session integrity
-                client.session().save_to_file(&self.config.session_file)
+                client.session().save_to_file(&session_file)
                     .map_err(|e| format!("Failed to save session after sign in: {}", e))?;
 
                 self.set_auth_state(AuthState::Ready).await;
@@ -368,6 +380,8 @@ impl TelegramClient {
     pub async fn send_password(&self, password: &str) -> Result<(), String> {
         log::info!("Sending 2FA password");
 
+        let session_file = self.config.read().unwrap().session_file.clone();
+
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -393,7 +407,7 @@ impl TelegramClient {
                 *self.current_user.write().await = Some(current_user);
 
                 // Save session - propagate errors to ensure session integrity
-                client.session().save_to_file(&self.config.session_file)
+                client.session().save_to_file(&session_file)
                     .map_err(|e| format!("Failed to save session after password check: {}", e))?;
 
                 self.set_auth_state(AuthState::Ready).await;
@@ -409,13 +423,15 @@ impl TelegramClient {
     pub async fn logout(&self) -> Result<(), String> {
         log::info!("Logging out");
 
+        let session_file = self.config.read().unwrap().session_file.clone();
+
         let client_guard = self.client.read().await;
         if let Some(client) = client_guard.as_ref() {
             let _ = client.sign_out().await;
         }
 
         // Delete session file
-        let _ = std::fs::remove_file(&self.config.session_file);
+        let _ = std::fs::remove_file(&session_file);
 
         *self.current_user.write().await = None;
         self.set_auth_state(AuthState::WaitPhoneNumber).await;
