@@ -30,7 +30,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   error: null,
 
   loadChats: async (limit = 50, filters?: ChatFilters) => {
-    set({ isLoadingChats: true, error: null });
+    // Clear existing chats to prevent showing stale data during load
+    set({ isLoadingChats: true, error: null, chats: [] });
     try {
       const chats = (await tauri.getChats(limit, filters)) as Chat[];
       set({ chats });
@@ -59,9 +60,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       set((state) => {
         const existing = state.messages[chatId] || [];
-        const combined = fromMessageId
-          ? [...existing, ...newMessages]
-          : newMessages;
+        let combined: Message[];
+        if (fromMessageId) {
+          // Pagination: merge and sort by message ID to maintain chronological order
+          const allMessages = [...existing, ...newMessages];
+          // Deduplicate by ID and sort ascending (oldest first)
+          const uniqueById = new Map(allMessages.map((m) => [m.id, m]));
+          combined = Array.from(uniqueById.values()).sort((a, b) => a.id - b.id);
+        } else {
+          combined = newMessages;
+        }
         return {
           messages: {
             ...state.messages,

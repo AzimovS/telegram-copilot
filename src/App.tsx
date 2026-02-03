@@ -16,7 +16,7 @@ import { OnboardingFlow } from "@/components/onboarding/OnboardingFlow";
 import "@/styles/globals.css";
 
 interface ViewProps {
-  onOpenChat: (chatId: number) => void;
+  onOpenChat: (chatId: number, chatName?: string, chatType?: string) => void;
 }
 
 function ChatsView({ onOpenChat }: ViewProps) {
@@ -24,7 +24,8 @@ function ChatsView({ onOpenChat }: ViewProps) {
 
   const handleSelectChat = (chatId: number) => {
     selectChat(chatId);
-    onOpenChat(chatId);
+    const chat = chats.find((c) => c.id === chatId);
+    onOpenChat(chatId, chat?.title, chat?.type);
   };
 
   return (
@@ -58,9 +59,8 @@ function OutreachViewWrapper() {
 }
 
 function BriefingViewWrapper({ onOpenChat }: ViewProps) {
-  // BriefingView expects (chatId, chatName) but we only need chatId
-  const handleOpenChat = (chatId: number, _chatName: string) => {
-    onOpenChat(chatId);
+  const handleOpenChat = (chatId: number, chatName: string, chatType?: string) => {
+    onOpenChat(chatId, chatName, chatType);
   };
 
   return (
@@ -105,6 +105,8 @@ function App() {
   const { onboardingCompleted } = useSettingsStore();
   const [currentView, setCurrentView] = useState<ViewType>("briefing");
   const [activeChatId, setActiveChatId] = useState<number | null>(null);
+  const [activeChatName, setActiveChatName] = useState<string | undefined>(undefined);
+  const [activeChatType, setActiveChatType] = useState<string | undefined>(undefined);
   const [showOnboarding, setShowOnboarding] = useState(!onboardingCompleted);
 
   useTelegramEvents();
@@ -118,12 +120,16 @@ function App() {
     setShowOnboarding(!onboardingCompleted);
   }, [onboardingCompleted]);
 
-  const handleOpenChat = (chatId: number) => {
+  const handleOpenChat = (chatId: number, chatName?: string, chatType?: string) => {
     setActiveChatId(chatId);
+    setActiveChatName(chatName);
+    setActiveChatType(chatType);
   };
 
   const handleCloseChat = () => {
     setActiveChatId(null);
+    setActiveChatName(undefined);
+    setActiveChatType(undefined);
   };
 
   // Show loading screen while connecting
@@ -165,6 +171,8 @@ function App() {
       currentView={currentView}
       onViewChange={setCurrentView}
       activeChatId={activeChatId}
+      activeChatName={activeChatName}
+      activeChatType={activeChatType}
       onCloseChat={handleCloseChat}
     >
       {renderView()}

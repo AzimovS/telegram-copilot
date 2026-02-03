@@ -105,6 +105,10 @@ export async function sendMessage(chatId: number, text: string): Promise<Message
   return invoke("send_message", { chatId, text });
 }
 
+export async function invalidateChatCache(): Promise<void> {
+  return invoke("invalidate_chat_cache");
+}
+
 // Contact commands
 export async function getContacts(): Promise<Contact[]> {
   return invoke("get_contacts");

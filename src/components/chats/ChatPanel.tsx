@@ -50,19 +50,12 @@ export function ChatPanel({
       {/* Chat Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-3">
-          {chat.photo ? (
-            <img
-              src={chat.photo}
-              alt={chat.title}
-              className="h-10 w-10 rounded-full object-cover"
-            />
-          ) : (
-            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-              <span className="text-lg font-medium text-primary">
-                {chat.title[0]}
-              </span>
-            </div>
-          )}
+          <span className="text-2xl">
+            {chat.type === "private" ? "💬" :
+             chat.type === "group" || chat.type === "supergroup" ? "👥" :
+             chat.type === "channel" ? "📢" :
+             chat.type === "secret" ? "🔒" : "💬"}
+          </span>
           <div>
             <h2 className="font-semibold">{chat.title}</h2>
             <p className="text-xs text-muted-foreground">

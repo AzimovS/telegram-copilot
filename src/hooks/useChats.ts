@@ -1,8 +1,10 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import { useChatStore } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { chatFiltersFromSettings, getFolders } from "@/lib/tauri";
 import type { Folder } from "@/types/telegram";
+
+const DEBOUNCE_MS = 300;
 
 export function useChats() {
   const {
@@ -21,24 +23,65 @@ export function useChats() {
 
   const chatFilters = useSettingsStore((state) => state.chatFilters);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const isInitialMount = useRef(true);
+
+  // Clear chats immediately on mount to prevent showing stale data
+  useEffect(() => {
+    useChatStore.setState({ chats: [], isLoadingChats: true });
+  }, []);
 
   // Load folders when component mounts or when selectedFolderIds changes
   useEffect(() => {
+    let cancelled = false;
+    setFoldersLoaded(false);
+
     // Only load folders if we have selected folder IDs
     if (chatFilters.selectedFolderIds.length > 0) {
       getFolders()
-        .then(setFolders)
-        .catch((err) => console.error("Failed to load folders:", err));
+        .then((f) => {
+          if (!cancelled) {
+            setFolders(f);
+            setFoldersLoaded(true);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load folders:", err);
+          if (!cancelled) setFoldersLoaded(true);
+        });
     } else {
       setFolders([]);
+      setFoldersLoaded(true);
     }
-  }, [chatFilters.selectedFolderIds.length]);
 
-  // Load chats on mount and when filters or folders change
+    return () => {
+      cancelled = true;
+    };
+  }, [chatFilters.selectedFolderIds]);
+
+  // Load chats on mount and when filters or folders change (with debouncing)
   useEffect(() => {
-    const filters = chatFiltersFromSettings(chatFilters, folders);
-    loadChats(50, filters);
-  }, [loadChats, chatFilters, folders]);
+    // Wait for folders to be loaded before fetching chats
+    if (!foldersLoaded) return;
+
+    // Skip debounce on initial mount for faster first load
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      const filters = chatFiltersFromSettings(chatFilters, folders);
+      loadChats(50, filters);
+      return;
+    }
+
+    // Debounce subsequent filter changes
+    const timeoutId = setTimeout(() => {
+      const filters = chatFiltersFromSettings(chatFilters, folders);
+      loadChats(50, filters);
+    }, DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [loadChats, chatFilters, folders, foldersLoaded]);
 
   // Get messages for selected chat
   const selectedChatMessages = selectedChatId

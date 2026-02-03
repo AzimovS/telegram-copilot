@@ -207,6 +207,7 @@ export function ChatFiltersDialog({ open, onOpenChange }: ChatFiltersDialogProps
                       max={SLIDER_MAX}
                       step={SLIDER_STEP}
                       className="w-full"
+                      aria-label="Group member range"
                     />
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>0</span>

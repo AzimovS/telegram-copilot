@@ -18,7 +18,7 @@ interface ResponseItem {
 
 interface ResponseCardProps {
   item: ResponseItem;
-  onOpenChat: (chatId: number, chatName: string) => void;
+  onOpenChat: (chatId: number, chatName: string, chatType?: string) => void;
   onSend: (chatId: number, message: string) => Promise<void>;
   onDraft: (chatId: number) => Promise<string>;
   onRemove: (chatId: number) => void;
@@ -35,9 +35,12 @@ export function ResponseCard({
   const [sending, setSending] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [sent, setSent] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const handleOpenChat = () => {
-    onOpenChat(item.chat_id, item.chat_name);
+    // Convert briefing chat_type to Telegram ChatType
+    const telegramType = item.chat_type === "dm" ? "private" : item.chat_type;
+    onOpenChat(item.chat_id, item.chat_name, telegramType);
   };
 
   const handleAIDraft = async () => {
@@ -56,6 +59,7 @@ export function ResponseCard({
     if (!draft.trim() || sending) return;
 
     setSending(true);
+    setSendError(null);
     try {
       await onSend(item.chat_id, draft);
       setSent(true);
@@ -63,9 +67,14 @@ export function ResponseCard({
         onRemove(item.chat_id);
       }, 500);
     } catch (err) {
-      alert(`Failed to send: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setSendError(err instanceof Error ? err.message : "Unknown error");
       setSending(false);
     }
+  };
+
+  const handleRetry = () => {
+    setSendError(null);
+    handleSend();
   };
 
   // Sent state - show confirmation
@@ -127,6 +136,21 @@ export function ResponseCard({
         {item.summary && (
           <div className="text-sm text-muted-foreground">
             <span className="font-medium">AI:</span> {item.summary}
+          </div>
+        )}
+
+        {/* Send Error Banner */}
+        {sendError && (
+          <div className="flex items-center justify-between gap-2 p-2 bg-red-50 border border-red-200 rounded text-sm">
+            <span className="text-red-700">Failed to send: {sendError}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRetry}
+              className="shrink-0"
+            >
+              Retry
+            </Button>
           </div>
         )}
 

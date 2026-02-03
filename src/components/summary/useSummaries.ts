@@ -57,7 +57,7 @@ export function useSummaries(options: UseSummariesOptions) {
     } else {
       setFolders([]);
     }
-  }, [globalChatFilters.selectedFolderIds.length]);
+  }, [globalChatFilters.selectedFolderIds]);
 
   const formatCacheAge = (generatedAt: number): string => {
     const now = Math.floor(Date.now() / 1000);

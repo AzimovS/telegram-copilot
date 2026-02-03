@@ -158,7 +158,10 @@ describe("chatStore", () => {
       });
       const messages = useChatStore.getState().messages[123];
       expect(messages).toHaveLength(3);
-      expect(messages[0].id).toBe(10);
+      // Messages should be sorted by ID in chronological order (oldest first)
+      expect(messages[0].id).toBe(4);
+      expect(messages[1].id).toBe(5);
+      expect(messages[2].id).toBe(10);
     });
 
     it("replaces messages when not paginating", async () => {
