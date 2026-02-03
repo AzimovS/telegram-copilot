@@ -20,6 +20,7 @@ export interface Chat {
   isMuted?: boolean;
   isArchived?: boolean;
   isBot?: boolean;
+  isContact?: boolean;
 }
 
 export type ChatType = "private" | "group" | "supergroup" | "channel" | "secret";

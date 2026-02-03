@@ -49,6 +49,8 @@ pub struct Chat {
     pub is_archived: bool,
     #[serde(default)]
     pub is_bot: bool,
+    #[serde(default)]
+    pub is_contact: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -512,12 +514,12 @@ impl TelegramClient {
             // This implements OR logic: folder chats show regardless of type/muted/archived/size filters
             if !filters.folder_chat_ids.is_empty() && filters.folder_chat_ids.contains(&chat.id()) {
                 // Chat is in a selected folder - extract info and add to results
-                let (chat_type, is_bot) = match chat {
+                let (chat_type, is_bot, is_contact) = match chat {
                     grammers_client::types::Chat::User(u) => {
-                        ("private", u.is_bot())
+                        ("private", u.is_bot(), u.raw.contact)
                     }
-                    grammers_client::types::Chat::Group(_) => ("group", false),
-                    grammers_client::types::Chat::Channel(_) => ("channel", false),
+                    grammers_client::types::Chat::Group(_) => ("group", false, false),
+                    grammers_client::types::Chat::Channel(_) => ("channel", false, false),
                 };
 
                 let title = match chat {
@@ -600,6 +602,7 @@ impl TelegramClient {
                     is_muted,
                     is_archived,
                     is_bot,
+                    is_contact,
                 });
 
                 count += 1;
@@ -738,8 +741,8 @@ impl TelegramClient {
                 }
             };
 
-            // Check group size range filter (only applies to groups, not channels)
-            if chat_type == "group" {
+            // Check group size range filter (applies to groups and channels)
+            if chat_type == "group" || chat_type == "channel" {
                 if let Some(count) = member_count {
                     // Check minimum size
                     if let Some(min_size) = filters.group_size_min {
@@ -756,7 +759,7 @@ impl TelegramClient {
                         }
                     }
                 }
-                // Groups without member_count pass through (shown)
+                // Groups/channels without member_count pass through (shown)
             }
 
             // Note: Folder filter is now applied at the top as early exit (OR logic)
@@ -780,6 +783,7 @@ impl TelegramClient {
                 is_muted,
                 is_archived,
                 is_bot,
+                is_contact,
             });
 
             count += 1;

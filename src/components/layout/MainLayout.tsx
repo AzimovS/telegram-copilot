@@ -7,6 +7,8 @@ interface MainLayoutProps {
   currentView: ViewType;
   onViewChange: (view: ViewType) => void;
   activeChatId: number | null;
+  activeChatName?: string;
+  activeChatType?: string;
   onCloseChat: () => void;
 }
 
@@ -15,6 +17,8 @@ export function MainLayout({
   currentView,
   onViewChange,
   activeChatId,
+  activeChatName,
+  activeChatType,
   onCloseChat,
 }: MainLayoutProps) {
   const isChatOpen = activeChatId !== null;
@@ -37,6 +41,8 @@ export function MainLayout({
         {/* Chat Panel */}
         <ChatPanel
           chatId={activeChatId}
+          chatName={activeChatName}
+          chatType={activeChatType}
           onClose={onCloseChat}
         />
       </div>

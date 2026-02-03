@@ -29,3 +29,11 @@ pub async fn send_message(
 ) -> Result<Message, String> {
     client.send_message(chat_id, &text).await
 }
+
+#[tauri::command]
+pub async fn invalidate_chat_cache(
+    client: State<'_, Arc<TelegramClient>>,
+) -> Result<(), String> {
+    client.invalidate_cache().await;
+    Ok(())
+}

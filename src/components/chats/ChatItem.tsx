@@ -1,6 +1,5 @@
 import { cn } from "@/lib/utils";
 import type { Chat } from "@/types/telegram";
-import { MessageSquare, Users, Megaphone, User } from "lucide-react";
 
 interface ChatItemProps {
   chat: Chat;
@@ -8,17 +7,19 @@ interface ChatItemProps {
   onClick: () => void;
 }
 
-function getChatIcon(type: string) {
+function getChatEmoji(type: string) {
   switch (type) {
     case "private":
-      return User;
+      return "💬";
     case "group":
     case "supergroup":
-      return Users;
+      return "👥";
     case "channel":
-      return Megaphone;
+      return "📢";
+    case "secret":
+      return "🔒";
     default:
-      return MessageSquare;
+      return "💬";
   }
 }
 
@@ -62,7 +63,7 @@ function getLastMessagePreview(chat: Chat): string {
 }
 
 export function ChatItem({ chat, isSelected, onClick }: ChatItemProps) {
-  const Icon = getChatIcon(chat.type);
+  const emoji = getChatEmoji(chat.type);
   const lastMessageTime = chat.lastMessage
     ? formatLastMessageTime(chat.lastMessage.date)
     : "";
@@ -78,17 +79,9 @@ export function ChatItem({ chat, isSelected, onClick }: ChatItemProps) {
     >
       {/* Avatar */}
       <div className="relative flex-shrink-0">
-        {chat.photo ? (
-          <img
-            src={chat.photo}
-            alt={chat.title}
-            className="h-12 w-12 rounded-full object-cover"
-          />
-        ) : (
-          <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-            <Icon className="h-6 w-6 text-primary" />
-          </div>
-        )}
+        <div className="h-12 w-12 flex items-center justify-center">
+          <span className="text-3xl">{emoji}</span>
+        </div>
         {chat.unreadCount > 0 && (
           <span className="absolute -top-1 -right-1 h-5 min-w-5 px-1 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-medium">
             {chat.unreadCount > 99 ? "99+" : chat.unreadCount}

@@ -184,6 +184,7 @@ pub fn run() {
             chats::get_chats,
             chats::get_chat_messages,
             chats::send_message,
+            chats::invalidate_chat_cache,
             // Contact commands
             contacts::get_contacts,
             contacts::add_contact_tag,

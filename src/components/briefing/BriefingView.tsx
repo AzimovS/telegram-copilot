@@ -9,7 +9,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import type { Folder } from "@/types/telegram";
 
 interface BriefingViewProps {
-  onOpenChat: (chatId: number, chatName: string) => void;
+  onOpenChat: (chatId: number, chatName: string, chatType?: string) => void;
 }
 
 interface ResponseItem {
@@ -88,7 +88,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
     } else {
       setFolders([]);
     }
-  }, [chatFilters.selectedFolderIds.length]);
+  }, [chatFilters.selectedFolderIds]);
 
   const load = useCallback(async (force: boolean) => {
     setLoading(true);
@@ -113,9 +113,10 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
       }
 
       // Separate large groups from chats to process (large groups are auto-classified as FYI)
+      // Note: Backend maps supergroups to "group" type, so no separate check needed
       const largeGroups = unreadChats.filter(
         (c) =>
-          (c.type === "group" || c.type === "supergroup" || c.type === "channel") &&
+          (c.type === "group" || c.type === "channel") &&
           (c.memberCount ?? 0) >= LARGE_GROUP_THRESHOLD
       );
       const smallChats = unreadChats.filter((c) => !largeGroups.includes(c));
@@ -243,7 +244,8 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
   const handleGetDraft = useCallback(async (chatId: number): Promise<string> => {
     try {
       const messages = await tauri.getChatMessages(chatId, 20);
-      const chat = (await tauri.getChats(100)).find((c) => c.id === chatId);
+      const filters = chatFiltersFromSettings(chatFilters, folders);
+      const chat = (await tauri.getChats(100, filters)).find((c) => c.id === chatId);
 
       const response = await fetch(`${API_URL}/api/draft/generate`, {
         method: "POST",
@@ -267,7 +269,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
       console.error("Failed to generate draft:", err);
     }
     return "";
-  }, []);
+  }, [chatFilters, folders]);
 
   // Calculate greeting based on time
   const getGreeting = () => {
@@ -407,7 +409,10 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
               <FYIItem
                 key={item.id}
                 item={item}
-                onOpenChat={() => onOpenChat(item.chat_id, item.chat_name)}
+                onOpenChat={() => {
+                  const telegramType = item.chat_type === "dm" ? "private" : item.chat_type;
+                  onOpenChat(item.chat_id, item.chat_name, telegramType);
+                }}
               />
             ))}
           </div>

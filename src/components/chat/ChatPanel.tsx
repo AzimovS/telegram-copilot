@@ -8,10 +8,12 @@ import type { Chat, Message } from "@/types/telegram";
 
 interface ChatPanelProps {
   chatId: number | null;
+  chatName?: string;
+  chatType?: string;
   onClose: () => void;
 }
 
-export function ChatPanel({ chatId, onClose }: ChatPanelProps) {
+export function ChatPanel({ chatId, chatName, chatType, onClose }: ChatPanelProps) {
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -31,11 +33,17 @@ export function ChatPanel({ chatId, onClose }: ChatPanelProps) {
       return;
     }
 
+    // Abort flag to prevent stale data when rapidly switching chats
+    let cancelled = false;
+
     const loadChat = async () => {
       setIsLoading(true);
       try {
-        // Get chat info
-        const chats = await tauri.getChats(100);
+        // Get chat info - pass undefined for filters to get all chats
+        // This ensures we find the chat even if it doesn't match current filters
+        const chats = await tauri.getChats(100, undefined);
+        if (cancelled) return;
+
         const foundChat = chats.find((c) => c.id === chatId);
         if (foundChat) {
           setChat(foundChat);
@@ -43,15 +51,24 @@ export function ChatPanel({ chatId, onClose }: ChatPanelProps) {
 
         // Get messages
         const msgs = await tauri.getChatMessages(chatId, 50);
+        if (cancelled) return;
+
         setMessages(msgs);
       } catch (error) {
+        if (cancelled) return;
         console.error("Failed to load chat:", error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
     loadChat();
+
+    return () => {
+      cancelled = true;
+    };
   }, [chatId]);
 
   // Auto-scroll to bottom when messages change
@@ -82,12 +99,44 @@ export function ChatPanel({ chatId, onClose }: ChatPanelProps) {
   };
 
   const handleGenerateDraft = async () => {
-    // TODO: Implement AI draft generation
+    if (!chatId || messages.length === 0) return;
+
     setIsGeneratingDraft(true);
     try {
-      // Placeholder - in Phase 2, this will call an AI endpoint
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      setDraft("Thanks for your message! I'll get back to you soon.");
+      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      // Prepare messages for the AI - take last 20 messages for context
+      const recentMessages = messages.slice(-20).map((msg) => ({
+        sender_name: msg.isOutgoing ? "You" : (msg.senderName || "User"),
+        text: msg.content.type === "text" ? msg.content.text : `[${msg.content.type}]`,
+        is_outgoing: msg.isOutgoing,
+      }));
+
+      const response = await fetch(`${API_URL}/api/draft/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          chat_title: chat?.title || chatName || "Chat",
+          messages: recentMessages,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to generate draft: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setDraft(data.draft);
+    } catch (error) {
+      console.error("Failed to generate AI draft:", error);
+      // Show more specific error message
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("Failed to fetch") || errorMessage.includes("NetworkError")) {
+        setDraft("Could not connect to AI backend. Make sure the backend server is running (cd backend && uvicorn app.main:app --reload --port 8000)");
+      } else {
+        setDraft(`Draft generation failed: ${errorMessage}`);
+      }
     } finally {
       setIsGeneratingDraft(false);
     }
@@ -110,10 +159,13 @@ export function ChatPanel({ chatId, onClose }: ChatPanelProps) {
       {/* Header */}
       <div className="flex items-center justify-between h-14 px-4 border-b shrink-0">
         <div className="flex items-center gap-3 overflow-hidden">
-          <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-medium text-primary shrink-0">
-            {chat?.title?.[0] || "?"}
-          </div>
-          <span className="font-medium truncate">{chat?.title || "Chat"}</span>
+          <span className="text-xl shrink-0">
+            {(chat?.type || chatType) === "private" ? "💬" :
+             (chat?.type || chatType) === "group" || (chat?.type || chatType) === "supergroup" ? "👥" :
+             (chat?.type || chatType) === "channel" ? "📢" :
+             (chat?.type || chatType) === "secret" ? "🔒" : "💬"}
+          </span>
+          <span className="font-medium truncate">{chat?.title || chatName || "Chat"}</span>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose}>
           <X className="h-4 w-4" />
