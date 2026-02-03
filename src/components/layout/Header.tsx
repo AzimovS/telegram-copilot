@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Sparkles,
@@ -11,6 +12,7 @@ import {
   Sun,
   Moon,
   Check,
+  Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +22,7 @@ import {
 } from "@/components/ui/popover";
 import { useAuthStore } from "@/stores/authStore";
 import { useThemeStore, type Theme } from "@/stores/themeStore";
+import { ChatFiltersDialog } from "@/components/settings/ChatFiltersDialog";
 
 export type ViewType = "briefing" | "summary" | "chats" | "contacts" | "outreach" | "offboard";
 
@@ -46,6 +49,7 @@ const themeOptions: { id: Theme; label: string; icon: typeof Sun }[] = [
 export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
   const { currentUser, logout } = useAuthStore();
   const { theme, setTheme } = useThemeStore();
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -99,28 +103,41 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
             </PopoverTrigger>
             <PopoverContent align="end" className="w-48">
               <div className="space-y-3">
-                <h4 className="font-medium text-sm">Theme</h4>
-                <div className="space-y-1">
-                  {themeOptions.map((option) => (
-                    <button
-                      key={option.id}
-                      onClick={() => setTheme(option.id)}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent",
-                        theme === option.id && "bg-accent"
-                      )}
-                    >
-                      <option.icon className="h-4 w-4" />
-                      <span className="flex-1 text-left">{option.label}</span>
-                      {theme === option.id && (
-                        <Check className="h-4 w-4 text-primary" />
-                      )}
-                    </button>
-                  ))}
+                <div>
+                  <h4 className="font-medium text-sm mb-1">Theme</h4>
+                  <div className="space-y-1">
+                    {themeOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        onClick={() => setTheme(option.id)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent",
+                          theme === option.id && "bg-accent"
+                        )}
+                      >
+                        <option.icon className="h-4 w-4" />
+                        <span className="flex-1 text-left">{option.label}</span>
+                        {theme === option.id && (
+                          <Check className="h-4 w-4 text-primary" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="border-t pt-3">
+                  <h4 className="font-medium text-sm mb-1">Filters</h4>
+                  <button
+                    onClick={() => setFiltersOpen(true)}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                  >
+                    <Filter className="h-4 w-4" />
+                    <span className="flex-1 text-left">Chat Filters</span>
+                  </button>
                 </div>
               </div>
             </PopoverContent>
           </Popover>
+          <ChatFiltersDialog open={filtersOpen} onOpenChange={setFiltersOpen} />
           <Button
             variant="ghost"
             size="icon"

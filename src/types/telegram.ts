@@ -17,6 +17,9 @@ export interface Chat {
   order: number;
   photo?: string;
   memberCount?: number;
+  isMuted?: boolean;
+  isArchived?: boolean;
+  isBot?: boolean;
 }
 
 export type ChatType = "private" | "group" | "supergroup" | "channel" | "secret";
@@ -44,9 +47,9 @@ export type MessageContent =
 export interface Folder {
   id: number;
   title: string;
+  emoticon?: string;
   includedChatIds: number[];
   excludedChatIds: number[];
-  includePeers: boolean;
   includeContacts: boolean;
   includeNonContacts: boolean;
   includeGroups: boolean;

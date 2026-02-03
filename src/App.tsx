@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useTelegramEvents } from "@/hooks/useTelegram";
 import { useChats } from "@/hooks/useChats";
 import { LoginForm } from "@/components/auth/LoginForm";
@@ -11,6 +12,7 @@ import { OutreachView } from "@/components/outreach/OutreachView";
 import { BriefingView } from "@/components/briefing/BriefingView";
 import { SummaryView } from "@/components/summary/SummaryView";
 import { OffboardView } from "@/components/offboard/OffboardView";
+import { OnboardingFlow } from "@/components/onboarding/OnboardingFlow";
 import "@/styles/globals.css";
 
 interface ViewProps {
@@ -100,14 +102,21 @@ function LoadingScreen() {
 
 function App() {
   const { authState, isConnecting, connect } = useAuthStore();
+  const { onboardingCompleted } = useSettingsStore();
   const [currentView, setCurrentView] = useState<ViewType>("briefing");
   const [activeChatId, setActiveChatId] = useState<number | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(!onboardingCompleted);
 
   useTelegramEvents();
 
   useEffect(() => {
     connect();
   }, [connect]);
+
+  // Sync showOnboarding state with store
+  useEffect(() => {
+    setShowOnboarding(!onboardingCompleted);
+  }, [onboardingCompleted]);
 
   const handleOpenChat = (chatId: number) => {
     setActiveChatId(chatId);
@@ -125,6 +134,11 @@ function App() {
   // Show login form if not authenticated
   if (authState.type !== "ready") {
     return <LoginForm />;
+  }
+
+  // Show onboarding flow for first-time users after login
+  if (showOnboarding) {
+    return <OnboardingFlow onComplete={() => setShowOnboarding(false)} />;
   }
 
   const renderView = () => {
