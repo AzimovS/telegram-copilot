@@ -393,21 +393,26 @@ Provide your analysis in JSON format."""
     )
 
 
-DRAFT_SYSTEM_PROMPT = """You are an AI assistant that generates helpful draft replies for Telegram conversations.
+DRAFT_SYSTEM_PROMPT = """You are an AI assistant helping a user draft a message in Telegram.
 
-Based on the conversation context, generate a friendly, appropriate reply that:
-- Matches the tone and style of the conversation
-- Addresses any questions or requests from the other person
-- Is concise and to the point
-- Sounds natural and human-like
+IMPORTANT: You are writing a message on behalf of "You" (the user). The conversation shows messages between "You" and other participants.
+
+Your task:
+- Write a draft message that "You" will send
+- If the last message is from someone else, respond to their message
+- If the last message is from "You", help continue or follow up naturally
+- Match the tone and style of the conversation
+- Address any questions or requests from the other person
+- Be concise and natural
 
 Do NOT:
+- Respond as if you are the other person
 - Be overly formal unless the conversation is formal
 - Include placeholders like [name] or [topic]
 - Be robotic or generic
-- Make up information you don't know
+- Make up information
 
-Just output the draft message text, nothing else."""
+Output ONLY the draft message text, nothing else."""
 
 
 async def generate_reply_draft(
@@ -416,6 +421,15 @@ async def generate_reply_draft(
 ) -> str:
     """Generate a draft reply for a chat conversation."""
     openai_client = get_openai_client()
+
+    # Determine who the other person is (for context)
+    other_names = set()
+    for msg in messages:
+        if not msg.get('is_outgoing'):
+            name = msg.get('sender_name', '')
+            if name and name != 'You':
+                other_names.add(name)
+    other_person = ', '.join(other_names) if other_names else 'the other person'
 
     # Sanitize all user-provided content to prevent prompt injection
     messages_text = "\n".join(
@@ -427,14 +441,23 @@ async def generate_reply_draft(
 
     sanitized_title = sanitize_user_content(chat_title)
 
-    user_prompt = f"""Generate a draft reply for this conversation:
+    # Determine context for the draft
+    last_msg = messages[-1] if messages else None
+    if last_msg and last_msg.get('is_outgoing'):
+        context_hint = "The last message was from You. Write a follow-up or continue the conversation."
+    else:
+        context_hint = f"The last message was from {sanitize_user_content(other_person)}. Write a reply to them."
 
-Chat: {sanitized_title}
+    user_prompt = f"""Generate a draft message for this conversation:
+
+Chat with: {sanitized_title}
 
 Recent messages:
 {messages_text}
 
-Write a natural, helpful reply to continue this conversation."""
+{context_hint}
+
+Write the draft message that "You" will send:"""
 
     content = await call_openai_with_retry(
         openai_client,

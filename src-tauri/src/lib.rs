@@ -145,6 +145,10 @@ pub fn run() {
             log::info!("API ID configured: {}", api_id != 0);
             log::info!("Test DC: {}", use_test_dc);
 
+            // Set session file path in app data directory
+            let session_path = app_dir.join("telegram.session");
+            telegram_client.set_session_file(session_path);
+
             // Restore outreach queues from database
             let manager = outreach_manager_clone.clone();
             tauri::async_runtime::spawn(async move {
