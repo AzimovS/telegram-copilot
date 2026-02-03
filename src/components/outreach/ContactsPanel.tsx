@@ -109,7 +109,7 @@ export function ContactsPanel({
         </Button>
       </div>
 
-      {/* Loading State */}
+      {/* Loading State - only show full spinner on initial load */}
       {isLoading && contacts.length === 0 && (
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center">
@@ -119,8 +119,8 @@ export function ContactsPanel({
         </div>
       )}
 
-      {/* Contact List */}
-      {!isLoading && (
+      {/* Contact List - show even while refreshing if we have data */}
+      {(contacts.length > 0 || !isLoading) && (
         <div className="flex-1 overflow-y-auto">
           {filteredContacts.map((contact) => {
             const fullName = `${contact.firstName} ${contact.lastName}`.trim();

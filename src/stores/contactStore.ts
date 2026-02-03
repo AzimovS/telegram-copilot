@@ -84,55 +84,8 @@ export const useContactStore = create<ContactStore>((set, get) => ({
     set({ error: null });
 
     try {
-      // Fetch contacts and chats in parallel, but handle partial failures gracefully
-      const results = await Promise.allSettled([
-        tauri.getContacts() as Promise<Contact[]>,
-        tauri.getChats(200), // Get enough chats to match with contacts
-      ]);
-
-      // Extract results, using empty arrays for failures
-      const contactsResult = results[0];
-      const chatsResult = results[1];
-
-      if (contactsResult.status === "rejected") {
-        throw new Error(`Failed to load contacts: ${contactsResult.reason}`);
-      }
-
-      const rawContacts = contactsResult.value;
-      const chats = chatsResult.status === "fulfilled" ? chatsResult.value : [];
-
-      // Log warning if chats failed (contacts still work, just without enrichment)
-      if (chatsResult.status === "rejected") {
-        console.warn("Failed to load chats for contact enrichment:", chatsResult.reason);
-      }
-
-      // Create a map of user ID to chat data for private chats
-      const chatByUserId = new Map<number, { lastMessageDate: number; unreadCount: number }>();
-      for (const chat of chats) {
-        // Private chats have the same ID as the user ID
-        if (chat.type === "private" && chat.lastMessage) {
-          chatByUserId.set(chat.id, {
-            lastMessageDate: chat.lastMessage.date,
-            unreadCount: chat.unreadCount,
-          });
-        }
-      }
-
-      // Enrich contacts with chat data
-      const now = Math.floor(Date.now() / 1000);
-      const contacts = rawContacts.map((contact) => {
-        const chatData = chatByUserId.get(contact.userId);
-        if (chatData) {
-          const daysSinceContact = Math.floor((now - chatData.lastMessageDate) / 86400);
-          return {
-            ...contact,
-            lastContactDate: chatData.lastMessageDate,
-            daysSinceContact,
-            unreadCount: chatData.unreadCount,
-          };
-        }
-        return contact;
-      });
+      // Backend now enriches contacts with chat data (lastContactDate, daysSinceContact, unreadCount)
+      const contacts = await tauri.getContacts() as Contact[];
 
       // Merge default tags (from settings) with tags from contacts
       const contactTags = contacts.flatMap((c) => c.tags);

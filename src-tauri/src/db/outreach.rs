@@ -37,24 +37,40 @@ pub fn save_recipient(
     queue_id: &str,
     recipient: &OutreachRecipient,
 ) -> Result<(), String> {
-    conn.execute(
+    // First try to update existing row
+    let updated = conn.execute(
         r#"
-        INSERT INTO outreach_recipients (queue_id, user_id, status, error, sent_at)
-        VALUES (?1, ?2, ?3, ?4, ?5)
-        ON CONFLICT(queue_id, user_id) DO UPDATE SET
-            status = excluded.status,
-            error = excluded.error,
-            sent_at = excluded.sent_at
+        UPDATE outreach_recipients
+        SET status = ?1, error = ?2, sent_at = ?3
+        WHERE queue_id = ?4 AND user_id = ?5
         "#,
         params![
-            queue_id,
-            recipient.user_id,
             recipient.status,
             recipient.error,
-            recipient.sent_at
+            recipient.sent_at,
+            queue_id,
+            recipient.user_id
         ],
     )
-    .map_err(|e| format!("Failed to save recipient: {}", e))?;
+    .map_err(|e| format!("Failed to update recipient: {}", e))?;
+
+    // If no row was updated, insert a new one
+    if updated == 0 {
+        conn.execute(
+            r#"
+            INSERT INTO outreach_recipients (queue_id, user_id, status, error, sent_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                queue_id,
+                recipient.user_id,
+                recipient.status,
+                recipient.error,
+                recipient.sent_at
+            ],
+        )
+        .map_err(|e| format!("Failed to insert recipient: {}", e))?;
+    }
 
     Ok(())
 }
