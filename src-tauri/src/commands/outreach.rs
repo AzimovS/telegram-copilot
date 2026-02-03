@@ -100,12 +100,21 @@ impl OutreachManager {
             None
         };
 
-        // Update in-memory
+        // Persist to database FIRST (source of truth) to avoid race condition
+        // If DB update fails, don't update in-memory state
+        if let Err(e) = db::with_db(|conn| {
+            db::outreach::update_recipient_status(conn, queue_id, user_id, status, error.clone(), sent_at)
+        }) {
+            log::error!("[Outreach] Failed to persist recipient status: {}", e);
+            return; // Don't update in-memory if DB fails
+        }
+
+        // Only update in-memory after DB succeeds
         let mut queues = self.queues.write().await;
         if let Some(queue) = queues.get_mut(queue_id) {
             if let Some(recipient) = queue.recipients.iter_mut().find(|r| r.user_id == user_id) {
                 recipient.status = status.to_string();
-                recipient.error = error.clone();
+                recipient.error = error;
                 if status == "sent" {
                     recipient.sent_at = sent_at;
                     queue.sent_count += 1;
@@ -114,33 +123,27 @@ impl OutreachManager {
                 }
             }
         }
-        drop(queues);
-
-        // Persist to database
-        if let Err(e) = db::with_db(|conn| {
-            db::outreach::update_recipient_status(conn, queue_id, user_id, status, error, sent_at)
-        }) {
-            log::error!("[Outreach] Failed to persist recipient status: {}", e);
-        }
+        // Lock automatically dropped at end of scope
     }
 
     pub async fn complete_queue(&self, queue_id: &str) {
         let completed_at = Some(chrono::Utc::now().timestamp());
 
-        // Update in-memory
+        // Persist to database FIRST (source of truth) to avoid race condition
+        if let Err(e) = db::with_db(|conn| {
+            db::outreach::update_queue_status(conn, queue_id, "completed", completed_at)
+        }) {
+            log::error!("[Outreach] Failed to persist queue completion: {}", e);
+            return; // Don't update in-memory if DB fails
+        }
+
+        // Only update in-memory after DB succeeds
         let mut queues = self.queues.write().await;
         if let Some(queue) = queues.get_mut(queue_id) {
             queue.status = "completed".to_string();
             queue.completed_at = completed_at;
         }
-        drop(queues);
-
-        // Persist to database
-        if let Err(e) = db::with_db(|conn| {
-            db::outreach::update_queue_status(conn, queue_id, "completed", completed_at)
-        }) {
-            log::error!("[Outreach] Failed to persist queue completion: {}", e);
-        }
+        // Lock automatically dropped at end of scope
     }
 
     pub async fn is_cancelled(&self, queue_id: &str) -> bool {
@@ -155,20 +158,26 @@ impl OutreachManager {
     pub async fn cancel(&self, queue_id: &str) -> Result<(), String> {
         let completed_at = Some(chrono::Utc::now().timestamp());
 
-        // Update in-memory
+        // Check if queue exists in memory first
+        {
+            let queues = self.queues.read().await;
+            if !queues.contains_key(queue_id) {
+                return Err("Queue not found".to_string());
+            }
+        }
+
+        // Persist to database FIRST (source of truth) to avoid race condition
+        db::with_db(|conn| {
+            db::outreach::update_queue_status(conn, queue_id, "cancelled", completed_at)
+        })?;
+
+        // Only update in-memory after DB succeeds
         let mut queues = self.queues.write().await;
         if let Some(queue) = queues.get_mut(queue_id) {
             queue.status = "cancelled".to_string();
             queue.completed_at = completed_at;
-        } else {
-            return Err("Queue not found".to_string());
         }
-        drop(queues);
-
-        // Persist to database
-        db::with_db(|conn| {
-            db::outreach::update_queue_status(conn, queue_id, "cancelled", completed_at)
-        })?;
+        // Lock automatically dropped at end of scope
 
         Ok(())
     }

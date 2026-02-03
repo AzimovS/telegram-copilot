@@ -1,6 +1,9 @@
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError, APIError
 from typing import Optional
 import json
+import asyncio
+import logging
+import re
 
 from ..config import get_settings
 from ..schemas.briefing import (
@@ -11,8 +14,14 @@ from ..schemas.briefing import (
     ChatSummaryResult,
 )
 
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
 client: Optional[AsyncOpenAI] = None
+
+# Retry configuration for rate limits
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 1.0  # seconds
 
 
 def get_openai_client() -> AsyncOpenAI:
@@ -20,6 +29,84 @@ def get_openai_client() -> AsyncOpenAI:
     if client is None:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
     return client
+
+
+def safe_json_parse(content: str, default: dict) -> dict:
+    """Safely parse JSON from OpenAI response with fallback."""
+    if not content:
+        logger.warning("Empty content received from OpenAI, using default")
+        return default
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON from OpenAI response: {e}")
+        logger.debug(f"Raw content: {content[:500]}")
+        return default
+
+
+def sanitize_user_content(text: str) -> str:
+    """Sanitize user-provided content to prevent prompt injection.
+
+    This escapes special patterns that could be used to manipulate the prompt.
+    """
+    if not text:
+        return ""
+    # Escape common prompt injection patterns
+    sanitized = text
+    # Remove or escape instruction-like patterns
+    sanitized = re.sub(r"(?i)(ignore|disregard|forget)\s+(previous|above|all)", "[filtered]", sanitized)
+    # Escape triple backticks that could break out of code blocks
+    sanitized = sanitized.replace("```", "'''")
+    # Limit length to prevent context overflow attacks
+    max_len = 10000
+    if len(sanitized) > max_len:
+        sanitized = sanitized[:max_len] + "...[truncated]"
+    return sanitized
+
+
+async def call_openai_with_retry(
+    openai_client: AsyncOpenAI,
+    messages: list,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    response_format: Optional[dict] = None,
+) -> str:
+    """Call OpenAI API with retry logic for rate limits."""
+    last_error = None
+    delay = INITIAL_RETRY_DELAY
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
+
+            response = await openai_client.chat.completions.create(**kwargs)
+            return response.choices[0].message.content or ""
+        except RateLimitError as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                logger.warning(f"Rate limited by OpenAI, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                await asyncio.sleep(delay)
+                delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"Rate limit exceeded after {MAX_RETRIES} retries")
+        except APIError as e:
+            last_error = e
+            if e.status_code and e.status_code >= 500 and attempt < MAX_RETRIES - 1:
+                logger.warning(f"OpenAI server error, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                await asyncio.sleep(delay)
+                delay *= 2
+            else:
+                raise
+
+    raise last_error or Exception("OpenAI API call failed after retries")
 
 
 BRIEFING_SYSTEM_PROMPT = """You are an AI assistant that analyzes Telegram chat messages and provides smart briefings.
@@ -48,35 +135,42 @@ async def generate_chat_briefing(chat: ChatContext) -> ChatBriefing:
     """Generate a briefing for a single chat."""
     openai_client = get_openai_client()
 
-    # Format messages for the prompt
+    # Format messages for the prompt with sanitization
     messages_text = "\n".join(
         [
-            f"{'You' if msg.is_outgoing else msg.sender_name}: {msg.text}"
+            f"{'You' if msg.is_outgoing else sanitize_user_content(msg.sender_name)}: {sanitize_user_content(msg.text)}"
             for msg in chat.messages[-20:]  # Last 20 messages
         ]
     )
 
     user_prompt = f"""Analyze this Telegram chat and provide a briefing:
 
-Chat: {chat.chat_title} ({chat.chat_type})
+Chat: {sanitize_user_content(chat.chat_title)} ({chat.chat_type})
 
 Recent messages:
 {messages_text}
 
 Provide your analysis in JSON format."""
 
-    response = await openai_client.chat.completions.create(
-        model=settings.openai_model,
+    content = await call_openai_with_retry(
+        openai_client,
         messages=[
             {"role": "system", "content": BRIEFING_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        response_format={"type": "json_object"},
+        model=settings.openai_model,
         temperature=0.3,
         max_tokens=500,
+        response_format={"type": "json_object"},
     )
 
-    result = json.loads(response.choices[0].message.content)
+    default_result = {
+        "category": "fyi",
+        "summary": "Unable to analyze chat",
+        "key_points": [],
+        "suggested_action": None,
+    }
+    result = safe_json_parse(content, default_result)
 
     # Count unread (non-outgoing messages at the end)
     unread_count = 0
@@ -148,32 +242,38 @@ async def generate_briefing_v2(chat: ChatContext) -> dict:
 - is_private_chat: {chat.is_private_chat}
 """
 
-    # Format messages for the prompt (last 10 for context)
+    # Format messages for the prompt (last 10 for context) with sanitization
     messages_text = "\n".join(
         [
-            f"[{'You' if msg.is_outgoing else msg.sender_name}]: {msg.text}"
+            f"[{'You' if msg.is_outgoing else sanitize_user_content(msg.sender_name)}]: {sanitize_user_content(msg.text)}"
             for msg in chat.messages[-10:]
         ]
     )
 
-    user_prompt = f"""Chat: {chat.chat_title} ({chat.chat_type})
+    user_prompt = f"""Chat: {sanitize_user_content(chat.chat_title)} ({chat.chat_type})
 
 {signals}
 MESSAGES:
 {messages_text}"""
 
-    response = await openai_client.chat.completions.create(
-        model=settings.openai_model,
+    content = await call_openai_with_retry(
+        openai_client,
         messages=[
             {"role": "system", "content": BRIEFING_V2_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        response_format={"type": "json_object"},
+        model=settings.openai_model,
         temperature=0.3,
         max_tokens=500,
+        response_format={"type": "json_object"},
     )
 
-    result = json.loads(response.choices[0].message.content)
+    default_result = {
+        "priority": "fyi",
+        "summary": "Unable to analyze chat",
+        "suggested_reply": None,
+    }
+    result = safe_json_parse(content, default_result)
     return result
 
 
@@ -196,7 +296,7 @@ async def generate_chat_summary(
 
     messages_text = "\n".join(
         [
-            f"{'You' if msg.is_outgoing else msg.sender_name}: {msg.text}"
+            f"{'You' if msg.is_outgoing else sanitize_user_content(msg.sender_name)}: {sanitize_user_content(msg.text)}"
             for msg in messages[-50:]  # Last 50 messages
         ]
     )
@@ -205,17 +305,18 @@ async def generate_chat_summary(
 
 {messages_text}"""
 
-    response = await openai_client.chat.completions.create(
-        model=settings.openai_model,
+    content = await call_openai_with_retry(
+        openai_client,
         messages=[
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
+        model=settings.openai_model,
         temperature=0.3,
         max_tokens=200,
     )
 
-    return response.choices[0].message.content.strip()
+    return content.strip() if content else "Unable to generate summary"
 
 
 DETAILED_SUMMARY_PROMPT = """You are an AI assistant that provides detailed summaries of Telegram conversations.
@@ -243,32 +344,40 @@ async def generate_detailed_summary(chat: ChatSummaryContext) -> ChatSummaryResu
 
     messages_text = "\n".join(
         [
-            f"{'You' if msg.is_outgoing else msg.sender_name}: {msg.text}"
+            f"{'You' if msg.is_outgoing else sanitize_user_content(msg.sender_name)}: {sanitize_user_content(msg.text)}"
             for msg in chat.messages[-30:]  # Last 30 messages
         ]
     )
 
     user_prompt = f"""Analyze this conversation and provide a detailed summary:
 
-Chat: {chat.chat_title} ({chat.chat_type})
+Chat: {sanitize_user_content(chat.chat_title)} ({chat.chat_type})
 
 Messages:
 {messages_text}
 
 Provide your analysis in JSON format."""
 
-    response = await openai_client.chat.completions.create(
-        model=settings.openai_model,
+    content = await call_openai_with_retry(
+        openai_client,
         messages=[
             {"role": "system", "content": DETAILED_SUMMARY_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        response_format={"type": "json_object"},
+        model=settings.openai_model,
         temperature=0.3,
         max_tokens=600,
+        response_format={"type": "json_object"},
     )
 
-    result = json.loads(response.choices[0].message.content)
+    default_result = {
+        "summary": "Unable to analyze conversation",
+        "key_points": [],
+        "action_items": [],
+        "sentiment": "neutral",
+        "needs_response": False,
+    }
+    result = safe_json_parse(content, default_result)
 
     return ChatSummaryResult(
         chat_id=chat.chat_id,
@@ -308,30 +417,34 @@ async def generate_reply_draft(
     """Generate a draft reply for a chat conversation."""
     openai_client = get_openai_client()
 
+    # Sanitize all user-provided content to prevent prompt injection
     messages_text = "\n".join(
         [
-            f"{'You' if msg.get('is_outgoing') else msg.get('sender_name', 'Them')}: {msg.get('text', '')}"
+            f"{'You' if msg.get('is_outgoing') else sanitize_user_content(msg.get('sender_name', 'Them'))}: {sanitize_user_content(msg.get('text', ''))}"
             for msg in messages[-15:]  # Last 15 messages for context
         ]
     )
 
+    sanitized_title = sanitize_user_content(chat_title)
+
     user_prompt = f"""Generate a draft reply for this conversation:
 
-Chat: {chat_title}
+Chat: {sanitized_title}
 
 Recent messages:
 {messages_text}
 
 Write a natural, helpful reply to continue this conversation."""
 
-    response = await openai_client.chat.completions.create(
-        model=settings.openai_model,
+    content = await call_openai_with_retry(
+        openai_client,
         messages=[
             {"role": "system", "content": DRAFT_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
+        model=settings.openai_model,
         temperature=0.7,
         max_tokens=300,
     )
 
-    return response.choices[0].message.content.strip()
+    return content.strip() if content else ""

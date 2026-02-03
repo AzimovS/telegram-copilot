@@ -72,9 +72,11 @@ function computeHoursSince(msgs: { date: number }[]): number {
 export function BriefingView({ onOpenChat }: BriefingViewProps) {
   const [data, setData] = useState<BriefingData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (force: boolean) => {
     setLoading(true);
+    setError(null);
 
     try {
       // Get chats with unread messages from Telegram
@@ -193,7 +195,9 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
       });
     } catch (err) {
       console.error("Failed to load briefing:", err);
-      // Keep previous data on error
+      const errorMessage = err instanceof Error ? err.message : "Failed to load briefing";
+      setError(errorMessage);
+      // Keep previous data on error, but show error state
     } finally {
       setLoading(false);
     }
@@ -270,6 +274,21 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
   const hasFYI = data && data.fyi_summaries.length > 0;
   const isEmpty = !hasNeedsResponse && !hasFYI;
 
+  // Error state UI
+  if (error && !data) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full py-20">
+        <p className="text-4xl mb-4">⚠️</p>
+        <p className="text-xl font-medium mb-2">Failed to load briefing</p>
+        <p className="text-muted-foreground mb-4 text-center max-w-md">{error}</p>
+        <Button variant="outline" onClick={() => load(true)}>
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* Header Section */}
@@ -296,6 +315,16 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
           </Button>
         </div>
       </div>
+
+      {/* Error Banner (when we have stale data) */}
+      {error && data && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center justify-between">
+          <span className="text-sm text-red-700">Failed to refresh: {error}</span>
+          <Button variant="ghost" size="sm" onClick={() => load(true)} disabled={loading}>
+            Retry
+          </Button>
+        </div>
+      )}
 
       {/* Stats Bar */}
       {data && (

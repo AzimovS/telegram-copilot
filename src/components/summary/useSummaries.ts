@@ -223,18 +223,28 @@ export function useSummaries(options: UseSummariesOptions) {
 
         const data = await response.json();
 
-        let newSummaries: ChatSummary[] = data.summaries.map((s: any) => ({
-          chatId: s.chat_id,
-          chatTitle: s.chat_title,
-          chatType: s.chat_type,
-          summary: s.summary,
-          keyPoints: s.key_points,
-          actionItems: s.action_items,
-          sentiment: s.sentiment,
-          needsResponse: s.needs_response,
-          messageCount: s.message_count,
-          lastMessageDate: s.last_message_date,
-        }));
+        // Validate response structure
+        if (!data || typeof data !== "object") {
+          throw new Error("Invalid response from backend: expected object");
+        }
+        if (!Array.isArray(data.summaries)) {
+          throw new Error("Invalid response from backend: missing summaries array");
+        }
+
+        let newSummaries: ChatSummary[] = data.summaries
+          .filter((s: any) => s && typeof s === "object" && s.chat_id != null)
+          .map((s: any) => ({
+            chatId: s.chat_id,
+            chatTitle: s.chat_title ?? "Unknown Chat",
+            chatType: s.chat_type ?? "unknown",
+            summary: s.summary ?? "No summary available",
+            keyPoints: Array.isArray(s.key_points) ? s.key_points : [],
+            actionItems: Array.isArray(s.action_items) ? s.action_items : [],
+            sentiment: s.sentiment ?? "neutral",
+            needsResponse: Boolean(s.needs_response),
+            messageCount: typeof s.message_count === "number" ? s.message_count : 0,
+            lastMessageDate: typeof s.last_message_date === "number" ? s.last_message_date : 0,
+          }));
 
         newSummaries = [...newSummaries, ...largeGroupSummaries];
 
@@ -309,26 +319,31 @@ export function useSummaries(options: UseSummariesOptions) {
         if (!response.ok) throw new Error(`Backend error: ${response.status}`);
 
         const data = await response.json();
-        if (data.summaries && data.summaries.length > 0) {
+
+        // Validate response structure
+        if (data && Array.isArray(data.summaries) && data.summaries.length > 0) {
           const newSummary = data.summaries[0];
-          setSummaries((prev) =>
-            prev.map((s) =>
-              s.chatId === chatId
-                ? {
-                    chatId: newSummary.chat_id,
-                    chatTitle: newSummary.chat_title,
-                    chatType: newSummary.chat_type,
-                    summary: newSummary.summary,
-                    keyPoints: newSummary.key_points,
-                    actionItems: newSummary.action_items,
-                    sentiment: newSummary.sentiment,
-                    needsResponse: newSummary.needs_response,
-                    messageCount: newSummary.message_count,
-                    lastMessageDate: newSummary.last_message_date,
-                  }
-                : s
-            )
-          );
+          // Ensure the summary has required fields
+          if (newSummary && typeof newSummary === "object" && newSummary.chat_id != null) {
+            setSummaries((prev) =>
+              prev.map((s) =>
+                s.chatId === chatId
+                  ? {
+                      chatId: newSummary.chat_id,
+                      chatTitle: newSummary.chat_title ?? s.chatTitle,
+                      chatType: newSummary.chat_type ?? s.chatType,
+                      summary: newSummary.summary ?? "No summary available",
+                      keyPoints: Array.isArray(newSummary.key_points) ? newSummary.key_points : [],
+                      actionItems: Array.isArray(newSummary.action_items) ? newSummary.action_items : [],
+                      sentiment: newSummary.sentiment ?? "neutral",
+                      needsResponse: Boolean(newSummary.needs_response),
+                      messageCount: typeof newSummary.message_count === "number" ? newSummary.message_count : s.messageCount,
+                      lastMessageDate: typeof newSummary.last_message_date === "number" ? newSummary.last_message_date : s.lastMessageDate,
+                    }
+                  : s
+              )
+            );
+          }
         }
       } catch (err) {
         console.error("Failed to regenerate summary:", err);

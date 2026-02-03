@@ -233,10 +233,9 @@ impl TelegramClient {
             self.set_auth_state(AuthState::WaitPhoneNumber).await;
         }
 
-        // Save session
-        if let Err(e) = client.session().save_to_file(&self.config.session_file) {
-            log::error!("Failed to save session: {}", e);
-        }
+        // Save session - propagate errors to ensure session integrity
+        client.session().save_to_file(&self.config.session_file)
+            .map_err(|e| format!("Failed to save session after connect: {}", e))?;
 
         *self.client.write().await = Some(client);
 
@@ -291,10 +290,9 @@ impl TelegramClient {
 
                 *self.current_user.write().await = Some(current_user);
 
-                // Save session
-                if let Err(e) = client.session().save_to_file(&self.config.session_file) {
-                    log::error!("Failed to save session: {}", e);
-                }
+                // Save session - propagate errors to ensure session integrity
+                client.session().save_to_file(&self.config.session_file)
+                    .map_err(|e| format!("Failed to save session after sign in: {}", e))?;
 
                 self.set_auth_state(AuthState::Ready).await;
                 Ok(())
@@ -349,9 +347,9 @@ impl TelegramClient {
 
                 *self.current_user.write().await = Some(current_user);
 
-                if let Err(e) = client.session().save_to_file(&self.config.session_file) {
-                    log::error!("Failed to save session: {}", e);
-                }
+                // Save session - propagate errors to ensure session integrity
+                client.session().save_to_file(&self.config.session_file)
+                    .map_err(|e| format!("Failed to save session after password check: {}", e))?;
 
                 self.set_auth_state(AuthState::Ready).await;
                 Ok(())
