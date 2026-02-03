@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Chat, Message } from "@/types/telegram";
 import * as tauri from "@/lib/tauri";
+import { type ChatFilters } from "@/lib/tauri";
 
 interface ChatStore {
   chats: Chat[];
@@ -11,7 +12,7 @@ interface ChatStore {
   error: string | null;
 
   // Actions
-  loadChats: (limit?: number) => Promise<void>;
+  loadChats: (limit?: number, filters?: ChatFilters) => Promise<void>;
   selectChat: (chatId: number | null) => void;
   loadMessages: (chatId: number, limit?: number, fromMessageId?: number) => Promise<void>;
   sendMessage: (chatId: number, text: string) => Promise<void>;
@@ -28,10 +29,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   isLoadingMessages: false,
   error: null,
 
-  loadChats: async (limit = 50) => {
+  loadChats: async (limit = 50, filters?: ChatFilters) => {
     set({ isLoadingChats: true, error: null });
     try {
-      const chats = (await tauri.getChats(limit)) as Chat[];
+      const chats = (await tauri.getChats(limit, filters)) as Chat[];
       set({ chats });
     } catch (error) {
       set({ error: String(error) });

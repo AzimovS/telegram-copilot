@@ -1,4 +1,4 @@
-use crate::telegram::{TelegramClient, client::{Chat, Message}};
+use crate::telegram::{TelegramClient, client::{Chat, Message, ChatFilters}};
 use tauri::State;
 use std::sync::Arc;
 
@@ -6,8 +6,9 @@ use std::sync::Arc;
 pub async fn get_chats(
     client: State<'_, Arc<TelegramClient>>,
     limit: i32,
+    filters: Option<ChatFilters>,
 ) -> Result<Vec<Chat>, String> {
-    client.get_chats(limit).await
+    client.get_chats(limit, filters).await
 }
 
 #[tauri::command]

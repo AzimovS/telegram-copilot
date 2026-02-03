@@ -11,7 +11,7 @@ interface ThemeStore {
 export const useThemeStore = create<ThemeStore>()(
   persist(
     (set) => ({
-      theme: "light",
+      theme: "dark",
       setTheme: (theme) => {
         // Update document class for CSS theming
         const root = document.documentElement;

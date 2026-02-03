@@ -4,6 +4,9 @@ import { ResponseCard } from "./ResponseCard";
 import { FYIItem } from "./FYIItem";
 import { Loader2, RefreshCw } from "lucide-react";
 import * as tauri from "@/lib/tauri";
+import { chatFiltersFromSettings } from "@/lib/tauri";
+import { useSettingsStore } from "@/stores/settingsStore";
+import type { Folder } from "@/types/telegram";
 
 interface BriefingViewProps {
   onOpenChat: (chatId: number, chatName: string) => void;
@@ -73,14 +76,28 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
   const [data, setData] = useState<BriefingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const chatFilters = useSettingsStore((state) => state.chatFilters);
+
+  // Load folders when selectedFolderIds changes
+  useEffect(() => {
+    if (chatFilters.selectedFolderIds.length > 0) {
+      tauri.getFolders()
+        .then(setFolders)
+        .catch((err) => console.error("Failed to load folders:", err));
+    } else {
+      setFolders([]);
+    }
+  }, [chatFilters.selectedFolderIds.length]);
 
   const load = useCallback(async (force: boolean) => {
     setLoading(true);
     setError(null);
 
     try {
-      // Get chats with unread messages from Telegram
-      const chats = await tauri.getChats(100);
+      // Get chats with unread messages from Telegram (with filters)
+      const filters = chatFiltersFromSettings(chatFilters, folders);
+      const chats = await tauri.getChats(100, filters);
       const unreadChats = chats.filter((c) => c.unreadCount > 0);
 
       if (unreadChats.length === 0) {
@@ -201,11 +218,11 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [chatFilters, folders]);
 
   useEffect(() => {
     load(false);
-  }, [load]);
+  }, [load, chatFilters, folders]);
 
   const removeItem = useCallback((chatId: number) => {
     setData((prev) => {

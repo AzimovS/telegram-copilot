@@ -43,6 +43,48 @@ pub struct Chat {
     pub photo: Option<String>,
     pub last_message: Option<Message>,
     pub member_count: Option<i32>,
+    #[serde(default)]
+    pub is_muted: bool,
+    #[serde(default)]
+    pub is_archived: bool,
+    #[serde(default)]
+    pub is_bot: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatFilters {
+    // Include DMs with users in contacts list
+    #[serde(default = "default_true")]
+    pub include_private_chats: bool,
+    // Include DMs with users NOT in contacts list
+    #[serde(default = "default_true")]
+    pub include_non_contacts: bool,
+    #[serde(default = "default_true")]
+    pub include_groups: bool,
+    #[serde(default = "default_true")]
+    pub include_channels: bool,
+    #[serde(default)]
+    pub include_bots: bool,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default)]
+    pub include_muted: bool,
+    // None = no limit, Some(n) = min members required
+    pub group_size_min: Option<i32>,
+    // None = no limit, Some(n) = max n members allowed
+    pub group_size_max: Option<i32>,
+    // Empty = no folder filtering, non-empty = only show chats in these folders
+    #[serde(default)]
+    pub selected_folder_ids: Vec<i32>,
+    // Pre-computed list of chat IDs from selected folders (union of all included_chat_ids)
+    // Empty = no folder filtering, non-empty = only show chats with these IDs
+    #[serde(default)]
+    pub folder_chat_ids: Vec<i64>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +120,7 @@ pub enum MessageContent {
 pub struct Folder {
     pub id: i32,
     pub title: String,
+    pub emoticon: Option<String>,
     pub included_chat_ids: Vec<i64>,
     pub excluded_chat_ids: Vec<i64>,
     pub include_contacts: bool,
@@ -432,8 +475,8 @@ impl TelegramClient {
         self.chat_cache.write().await.clear();
     }
 
-    /// Get chat list (dialogs)
-    pub async fn get_chats(&self, limit: i32) -> Result<Vec<Chat>, String> {
+    /// Get chat list (dialogs) with optional filters
+    pub async fn get_chats(&self, limit: i32, filters: Option<ChatFilters>) -> Result<Vec<Chat>, String> {
         log::info!("Getting chats, limit: {}", limit);
 
         let client_guard = self.client.read().await;
@@ -443,6 +486,7 @@ impl TelegramClient {
         let _permit = self.dialog_semaphore.acquire().await
             .map_err(|e| format!("Failed to acquire semaphore: {}", e))?;
 
+        let filters = filters.unwrap_or_default();
         let mut dialogs = client.iter_dialogs();
         let mut chats = Vec::new();
         let mut count = 0;
@@ -453,12 +497,189 @@ impl TelegramClient {
                 break;
             }
 
-            let chat = dialog.chat();
-            let chat_type = match chat {
-                grammers_client::types::Chat::User(_) => "private",
-                grammers_client::types::Chat::Group(_) => "group",
-                grammers_client::types::Chat::Channel(_) => "channel",
+            // Check if this is an archived folder
+            let is_archived = match &dialog.raw {
+                tl::enums::Dialog::Dialog(d) => d.folder_id == Some(1),
+                tl::enums::Dialog::Folder(_) => continue, // Skip folder entries themselves
             };
+
+            // Skip archived chats if not included (unless in a selected folder - checked below)
+            // Note: We check folder membership first to allow archived chats from selected folders
+
+            let chat = dialog.chat();
+
+            // EARLY EXIT: If chat is in selected folders, include it (bypass all other filters)
+            // This implements OR logic: folder chats show regardless of type/muted/archived/size filters
+            if !filters.folder_chat_ids.is_empty() && filters.folder_chat_ids.contains(&chat.id()) {
+                // Chat is in a selected folder - extract info and add to results
+                let (chat_type, is_bot) = match chat {
+                    grammers_client::types::Chat::User(u) => {
+                        ("private", u.is_bot())
+                    }
+                    grammers_client::types::Chat::Group(_) => ("group", false),
+                    grammers_client::types::Chat::Channel(_) => ("channel", false),
+                };
+
+                let title = match chat {
+                    grammers_client::types::Chat::User(u) => {
+                        format!("{} {}", u.first_name(), u.last_name().unwrap_or(""))
+                    }
+                    grammers_client::types::Chat::Group(g) => g.title().to_string(),
+                    grammers_client::types::Chat::Channel(c) => c.title().to_string(),
+                };
+
+                let last_message = dialog.last_message.as_ref().map(|msg| {
+                    let text = msg.text();
+                    let content = if !text.is_empty() {
+                        MessageContent::Text { text: text.to_string() }
+                    } else if msg.photo().is_some() {
+                        MessageContent::Photo { caption: None }
+                    } else {
+                        MessageContent::Unknown
+                    };
+
+                    Message {
+                        id: msg.id() as i64,
+                        chat_id: chat.id(),
+                        sender_id: msg.sender().map(|s| s.id()).unwrap_or(0),
+                        sender_name: msg.sender().map(|s| s.name().to_string()).unwrap_or_default(),
+                        content,
+                        date: msg.date().timestamp(),
+                        is_outgoing: msg.outgoing(),
+                        is_read: true,
+                    }
+                });
+
+                let unread_count = match &dialog.raw {
+                    tl::enums::Dialog::Dialog(d) => d.unread_count,
+                    tl::enums::Dialog::Folder(_) => 0,
+                };
+
+                let is_pinned = match &dialog.raw {
+                    tl::enums::Dialog::Dialog(d) => d.pinned,
+                    tl::enums::Dialog::Folder(_) => false,
+                };
+
+                let is_muted = match &dialog.raw {
+                    tl::enums::Dialog::Dialog(d) => {
+                        match &d.notify_settings {
+                            tl::enums::PeerNotifySettings::Settings(settings) => {
+                                settings.mute_until.map(|t| t > 0).unwrap_or(false) || settings.silent.unwrap_or(false)
+                            }
+                        }
+                    }
+                    tl::enums::Dialog::Folder(_) => false,
+                };
+
+                let member_count = match chat {
+                    grammers_client::types::Chat::User(_) => None,
+                    grammers_client::types::Chat::Group(g) => {
+                        match &g.raw {
+                            tl::enums::Chat::Chat(c) => Some(c.participants_count),
+                            _ => None,
+                        }
+                    }
+                    grammers_client::types::Chat::Channel(c) => {
+                        c.raw.participants_count
+                    }
+                };
+
+                // Cache and add to results
+                cache.insert(chat.id(), dialog.chat.clone());
+
+                chats.push(Chat {
+                    id: chat.id(),
+                    chat_type: chat_type.to_string(),
+                    title: title.trim().to_string(),
+                    unread_count,
+                    is_pinned,
+                    order: -(dialog.last_message.as_ref().map(|m| m.date().timestamp()).unwrap_or(0)),
+                    photo: None,
+                    last_message,
+                    member_count,
+                    is_muted,
+                    is_archived,
+                    is_bot,
+                });
+
+                count += 1;
+                continue;
+            }
+
+            // Skip archived chats if not included
+            if is_archived && !filters.include_archived {
+                // Still cache for message retrieval
+                cache.insert(dialog.chat.id(), dialog.chat.clone());
+                continue;
+            }
+
+            // Determine chat type, check if it's a bot, and check contact status
+            let (chat_type, is_bot, is_contact) = match chat {
+                grammers_client::types::Chat::User(u) => {
+                    let is_bot = u.is_bot();
+                    // Check if user is a contact from the raw User data
+                    let is_contact = u.raw.contact;
+                    ("private", is_bot, is_contact)
+                }
+                grammers_client::types::Chat::Group(_) => ("group", false, false),
+                grammers_client::types::Chat::Channel(_) => ("channel", false, false),
+            };
+
+            // Apply type filters
+            match chat_type {
+                "private" => {
+                    if is_bot {
+                        if !filters.include_bots {
+                            cache.insert(chat.id(), dialog.chat.clone());
+                            continue;
+                        }
+                    } else {
+                        // Non-bot private chat - contacts and non-contacts are independent filters
+                        if is_contact && !filters.include_private_chats {
+                            // Contact but contacts filter is off
+                            cache.insert(chat.id(), dialog.chat.clone());
+                            continue;
+                        }
+                        if !is_contact && !filters.include_non_contacts {
+                            // Non-contact but non-contacts filter is off
+                            cache.insert(chat.id(), dialog.chat.clone());
+                            continue;
+                        }
+                    }
+                }
+                "group" => {
+                    if !filters.include_groups {
+                        cache.insert(chat.id(), dialog.chat.clone());
+                        continue;
+                    }
+                }
+                "channel" => {
+                    if !filters.include_channels {
+                        cache.insert(chat.id(), dialog.chat.clone());
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+
+            // Check muted status from notify settings
+            let is_muted = match &dialog.raw {
+                tl::enums::Dialog::Dialog(d) => {
+                    match &d.notify_settings {
+                        tl::enums::PeerNotifySettings::Settings(settings) => {
+                            // mute_until > 0 or silent = true means muted
+                            settings.mute_until.map(|t| t > 0).unwrap_or(false) || settings.silent.unwrap_or(false)
+                        }
+                    }
+                }
+                tl::enums::Dialog::Folder(_) => false,
+            };
+
+            // Skip muted chats if not included
+            if is_muted && !filters.include_muted {
+                cache.insert(chat.id(), dialog.chat.clone());
+                continue;
+            }
 
             let title = match chat {
                 grammers_client::types::Chat::User(u) => {
@@ -517,6 +738,32 @@ impl TelegramClient {
                 }
             };
 
+            // Check group size range filter (only applies to groups, not channels)
+            if chat_type == "group" {
+                if let Some(count) = member_count {
+                    // Check minimum size
+                    if let Some(min_size) = filters.group_size_min {
+                        if count < min_size {
+                            cache.insert(chat.id(), dialog.chat.clone());
+                            continue;
+                        }
+                    }
+                    // Check maximum size (1001+ means no limit)
+                    if let Some(max_size) = filters.group_size_max {
+                        if max_size <= 1000 && count > max_size {
+                            cache.insert(chat.id(), dialog.chat.clone());
+                            continue;
+                        }
+                    }
+                }
+                // Groups without member_count pass through (shown)
+            }
+
+            // Note: Folder filter is now applied at the top as early exit (OR logic)
+            // Chats reaching this point either:
+            // 1. Have no folder filter active (folder_chat_ids is empty)
+            // 2. Are NOT in any selected folder but pass all type/muted/archived/size filters
+
             // Cache the chat object for later use
             cache.insert(chat.id(), dialog.chat.clone());
 
@@ -530,6 +777,9 @@ impl TelegramClient {
                 photo: None,
                 last_message,
                 member_count,
+                is_muted,
+                is_archived,
+                is_bot,
             });
 
             count += 1;
@@ -698,20 +948,75 @@ impl TelegramClient {
         Ok(users)
     }
 
-    /// Get chat folders
-    ///
-    /// TODO: Implement folder support once grammers API is verified.
-    /// The grammers library's folder API may vary by version.
-    /// See: https://core.telegram.org/api/folders
+    /// Get chat folders using MTProto GetDialogFilters
     pub async fn get_folders(&self) -> Result<Vec<Folder>, String> {
-        log::info!("Getting folders (not implemented)");
+        log::info!("Getting folders");
 
         let client_guard = self.client.read().await;
-        let _client = client_guard.as_ref().ok_or("Client not connected")?;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
 
-        // Returns empty - folder enumeration requires raw MTProto calls
-        // that aren't directly exposed in the current grammers version
-        Ok(Vec::new())
+        let result = client
+            .invoke(&tl::functions::messages::GetDialogFilters {})
+            .await
+            .map_err(|e| format!("Failed to get folders: {}", e))?;
+
+        let mut folders = Vec::new();
+
+        // Extract filters from the DialogFilters response
+        let dialog_filters = match result {
+            tl::enums::messages::DialogFilters::Filters(f) => f.filters,
+        };
+
+        // Parse the DialogFilters response
+        for filter in dialog_filters {
+            match filter {
+                tl::enums::DialogFilter::Filter(f) => {
+                    // Extract peer IDs from include_peers
+                    let included_chat_ids: Vec<i64> = f.include_peers.iter().filter_map(|peer| {
+                        match peer {
+                            tl::enums::InputPeer::Chat(c) => Some(c.chat_id),
+                            tl::enums::InputPeer::Channel(c) => Some(c.channel_id),
+                            tl::enums::InputPeer::User(u) => Some(u.user_id),
+                            _ => None,
+                        }
+                    }).collect();
+
+                    // Extract peer IDs from exclude_peers
+                    let excluded_chat_ids: Vec<i64> = f.exclude_peers.iter().filter_map(|peer| {
+                        match peer {
+                            tl::enums::InputPeer::Chat(c) => Some(c.chat_id),
+                            tl::enums::InputPeer::Channel(c) => Some(c.channel_id),
+                            tl::enums::InputPeer::User(u) => Some(u.user_id),
+                            _ => None,
+                        }
+                    }).collect();
+
+                    folders.push(Folder {
+                        id: f.id,
+                        title: f.title,
+                        emoticon: f.emoticon,
+                        included_chat_ids,
+                        excluded_chat_ids,
+                        include_contacts: f.contacts,
+                        include_non_contacts: f.non_contacts,
+                        include_groups: f.groups,
+                        include_channels: f.broadcasts,
+                        include_bots: f.bots,
+                    });
+                }
+                tl::enums::DialogFilter::Default => {
+                    // The default "All Chats" filter - skip it
+                    continue;
+                }
+                tl::enums::DialogFilter::Chatlist(_) => {
+                    // Shared folder / chatlist - skip for now
+                    continue;
+                }
+            }
+        }
+
+        log::info!("Found {} folders", folders.len());
+        Ok(folders)
     }
 
     /// Get common chats/groups with a specific user

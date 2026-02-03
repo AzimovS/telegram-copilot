@@ -1,5 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
 import * as tauri from "@/lib/tauri";
+import { chatFiltersFromSettings } from "@/lib/tauri";
+import { useSettingsStore } from "@/stores/settingsStore";
+import type { Folder } from "@/types/telegram";
 import {
   ChatSummary,
   ChatTypeFilter,
@@ -30,6 +33,7 @@ interface UseSummariesOptions {
 export function useSummaries(options: UseSummariesOptions) {
   const { typeFilter, timeFilter, needsResponseOnly, sortBy } = options;
 
+  const globalChatFilters = useSettingsStore((state) => state.chatFilters);
   const [summaries, setSummaries] = useState<ChatSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,8 +44,20 @@ export function useSummaries(options: UseSummariesOptions) {
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [folders, setFolders] = useState<Folder[]>([]);
 
   const pageSize = 10;
+
+  // Load folders when selectedFolderIds changes
+  useEffect(() => {
+    if (globalChatFilters.selectedFolderIds.length > 0) {
+      tauri.getFolders()
+        .then(setFolders)
+        .catch((err) => console.error("Failed to load folders:", err));
+    } else {
+      setFolders([]);
+    }
+  }, [globalChatFilters.selectedFolderIds.length]);
 
   const formatCacheAge = (generatedAt: number): string => {
     const now = Math.floor(Date.now() / 1000);
@@ -118,7 +134,8 @@ export function useSummaries(options: UseSummariesOptions) {
       setError(null);
 
       try {
-        const chats = (await tauri.getChats(100)) as Chat[];
+        const filters = chatFiltersFromSettings(globalChatFilters, folders);
+        const chats = (await tauri.getChats(100, filters)) as Chat[];
 
         let filteredChats = chats;
         if (typeFilter !== "all") {
@@ -279,7 +296,7 @@ export function useSummaries(options: UseSummariesOptions) {
         setIsLoadingMore(false);
       }
     },
-    [typeFilter, timeFilter, needsResponseOnly, offset, sortSummaries]
+    [typeFilter, timeFilter, needsResponseOnly, offset, sortSummaries, globalChatFilters, folders]
   );
 
   const regenerateSingle = useCallback(
@@ -363,7 +380,7 @@ export function useSummaries(options: UseSummariesOptions) {
   useEffect(() => {
     loadSummaries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [typeFilter, timeFilter, needsResponseOnly]);
+  }, [typeFilter, timeFilter, needsResponseOnly, globalChatFilters, folders]);
 
   return {
     summaries,
