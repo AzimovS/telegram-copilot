@@ -84,11 +84,27 @@ export const useContactStore = create<ContactStore>((set, get) => ({
     set({ error: null });
 
     try {
-      // Fetch contacts and chats in parallel
-      const [rawContacts, chats] = await Promise.all([
+      // Fetch contacts and chats in parallel, but handle partial failures gracefully
+      const results = await Promise.allSettled([
         tauri.getContacts() as Promise<Contact[]>,
         tauri.getChats(200), // Get enough chats to match with contacts
       ]);
+
+      // Extract results, using empty arrays for failures
+      const contactsResult = results[0];
+      const chatsResult = results[1];
+
+      if (contactsResult.status === "rejected") {
+        throw new Error(`Failed to load contacts: ${contactsResult.reason}`);
+      }
+
+      const rawContacts = contactsResult.value;
+      const chats = chatsResult.status === "fulfilled" ? chatsResult.value : [];
+
+      // Log warning if chats failed (contacts still work, just without enrichment)
+      if (chatsResult.status === "rejected") {
+        console.warn("Failed to load chats for contact enrichment:", chatsResult.reason);
+      }
 
       // Create a map of user ID to chat data for private chats
       const chatByUserId = new Map<number, { lastMessageDate: number; unreadCount: number }>();

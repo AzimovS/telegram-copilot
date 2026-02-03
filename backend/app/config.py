@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
 
 
@@ -11,6 +12,16 @@ class Settings(BaseSettings):
     # OpenAI settings
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+
+    @field_validator("openai_api_key")
+    @classmethod
+    def validate_api_key(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "OPENAI_API_KEY environment variable is required. "
+                "Please set it in your .env file or environment."
+            )
+        return v.strip()
 
     # Redis settings
     redis_url: str = "redis://localhost:6379"
