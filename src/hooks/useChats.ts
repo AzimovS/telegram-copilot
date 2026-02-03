@@ -91,10 +91,10 @@ export function useChats() {
   // Get selected chat
   const selectedChat = chats.find((c) => c.id === selectedChatId) || null;
 
-  // Load more messages
+  // Load more messages (messages are sorted oldest-first, so index 0 is the oldest)
   const loadMoreMessages = useCallback(() => {
     if (selectedChatId && selectedChatMessages.length > 0) {
-      const oldestMessage = selectedChatMessages[selectedChatMessages.length - 1];
+      const oldestMessage = selectedChatMessages[0];
       loadMessages(selectedChatId, 50, oldestMessage.id);
     }
   }, [selectedChatId, selectedChatMessages, loadMessages]);
