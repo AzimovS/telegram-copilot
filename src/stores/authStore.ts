@@ -76,6 +76,12 @@ export const useAuthStore = create<AuthStore>((set) => ({
         const hintMatch = errorStr.match(/Hint: (.*)$/);
         const hint = hintMatch ? hintMatch[1] : "";
         set({ authState: { type: "waitPassword", hint }, error: null });
+      } else if (errorStr.includes("No login token")) {
+        // Session expired - reset to phone input with user-friendly message
+        set({
+          authState: { type: "waitPhoneNumber" },
+          error: "Session expired. Please enter your phone number again."
+        });
       } else {
         set({ error: errorStr });
       }
