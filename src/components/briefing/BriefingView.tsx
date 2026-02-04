@@ -8,51 +8,16 @@ import { chatFiltersFromSettings } from "@/lib/tauri";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { Folder } from "@/types/telegram";
 
+import type {
+  FYIItemData,
+  BriefingV2Response,
+} from "@/lib/tauri";
+
 interface BriefingViewProps {
   onOpenChat: (chatId: number, chatName: string, chatType?: string) => void;
 }
 
-interface ResponseItem {
-  id: number;
-  chat_id: number;
-  chat_name: string;
-  chat_type: "dm" | "group" | "channel";
-  unread_count: number;
-  last_message: string | null;
-  last_message_date: string | null;
-  priority: "urgent" | "needs_reply";
-  summary: string;
-  suggested_reply: string | null;
-}
-
-interface FYIItemData {
-  id: number;
-  chat_id: number;
-  chat_name: string;
-  chat_type: "dm" | "group" | "channel";
-  unread_count: number;
-  last_message: string | null;
-  last_message_date: string | null;
-  priority: "fyi";
-  summary: string;
-}
-
-interface BriefingStats {
-  needs_response_count: number;
-  fyi_count: number;
-  total_unread: number;
-}
-
-interface BriefingData {
-  needs_response: ResponseItem[];
-  fyi_summaries: FYIItemData[];
-  stats: BriefingStats;
-  generated_at: string;
-  cached: boolean;
-  cache_age?: string;
-}
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+type BriefingData = BriefingV2Response;
 
 // Large groups (500+ members) are auto-classified as FYI to save API calls
 const LARGE_GROUP_THRESHOLD = 500;
@@ -182,21 +147,8 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
         return;
       }
 
-      // Call V2 API endpoint
-      const response = await fetch(`${API_URL}/api/briefing/v2/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chats: chatContexts,
-          force_refresh: force,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Backend error: ${response.status}`);
-      }
-
-      const result: BriefingData = await response.json();
+      // Call Tauri AI command
+      const result: BriefingData = await tauri.generateBriefingV2(chatContexts, force);
 
       // Merge large group FYIs with AI-generated FYIs
       const mergedFYIs = [...result.fyi_summaries, ...largeGroupFYIs];
@@ -247,24 +199,17 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
       const filters = chatFiltersFromSettings(chatFilters, folders);
       const chat = (await tauri.getChats(100, filters)).find((c) => c.id === chatId);
 
-      const response = await fetch(`${API_URL}/api/draft/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          chat_title: chat?.title || "Chat",
-          messages: messages.map((m) => ({
-            sender_name: m.senderName,
-            text: m.content.type === "text" ? m.content.text : "[Media]",
-            is_outgoing: m.isOutgoing,
-          })),
-        }),
-      });
+      const result = await tauri.generateDraft(
+        chatId,
+        chat?.title || "Chat",
+        messages.map((m) => ({
+          sender_name: m.senderName,
+          text: m.content.type === "text" ? m.content.text : "[Media]",
+          is_outgoing: m.isOutgoing,
+        }))
+      );
 
-      if (response.ok) {
-        const data = await response.json();
-        return data.draft || "";
-      }
+      return result.draft || "";
     } catch (err) {
       console.error("Failed to generate draft:", err);
     }

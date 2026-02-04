@@ -57,7 +57,7 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
         {/* Logo */}
         <div className="flex items-center gap-2 font-semibold shrink-0">
           <MessageSquare className="h-5 w-5 text-primary" />
-          <span className="hidden sm:inline">Telegram CoPilot</span>
+          <span className="hidden sm:inline">Telegram Copilot</span>
         </div>
 
         {/* Navigation Tabs */}
