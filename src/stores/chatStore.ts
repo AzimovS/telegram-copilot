@@ -22,6 +22,7 @@ interface ChatStore {
   addMessage: (message: Message) => void;
   updateChat: (chat: Chat) => void;
   clearError: () => void;
+  reset: () => void;
 
   // Helpers
   shouldRefreshChats: (ttlMinutes: number, currentFiltersHash: string) => boolean;
@@ -155,6 +156,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+
+  reset: () =>
+    set({
+      chats: [],
+      selectedChatId: null,
+      messages: {},
+      messagesLoadedAt: {},
+      isLoadingChats: false,
+      isLoadingMessages: false,
+      error: null,
+      lastChatsLoadedAt: null,
+      lastFiltersHash: null,
+    }),
 
   shouldRefreshChats: (ttlMinutes, currentFiltersHash) => {
     const { chats, lastChatsLoadedAt, lastFiltersHash } = get();

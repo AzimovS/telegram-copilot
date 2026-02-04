@@ -221,6 +221,81 @@ impl TelegramClient {
         self.config.write().unwrap().session_file = path;
     }
 
+    /// Ensure parent directory exists and save session to file
+    fn save_session_to_file(session: &grammers_session::Session, path: &PathBuf) -> Result<(), String> {
+        // Log the path for debugging
+        log::info!("Saving session to: {:?}", path);
+
+        // Warn if path is not absolute - this could indicate a configuration issue
+        if !path.is_absolute() {
+            log::warn!("Session file path is not absolute: {:?}. This may cause issues.", path);
+        }
+
+        if let Some(parent) = path.parent() {
+            // Only create directory if parent is not empty (handles relative paths like "file.session")
+            if !parent.as_os_str().is_empty() {
+                log::debug!("Creating session directory: {:?}", parent);
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create session directory {:?}: {}", parent, e))?;
+            }
+        }
+        session.save_to_file(path)
+            .map_err(|e| format!("Failed to save session to {:?}: {}", path, e))
+    }
+
+    /// Check if an error message indicates a connection failure that can be retried
+    fn is_connection_error(error: &str) -> bool {
+        error.contains("read error")
+            || error.contains("IO failed")
+            || error.contains("read 0 bytes")
+            || error.contains("connection")
+            || error.contains("timed out")
+            || error.contains("broken pipe")
+    }
+
+    /// Reconnect to Telegram using saved session
+    pub async fn reconnect(&self) -> Result<(), String> {
+        log::info!("Reconnecting to Telegram...");
+
+        let (session_file, api_id, api_hash) = {
+            let config = self.config.read().unwrap();
+            (config.session_file.clone(), config.api_id, config.api_hash.clone())
+        };
+
+        let session = Session::load_file_or_create(&session_file)
+            .map_err(|e| format!("Failed to load session: {}", e))?;
+
+        let client = Client::connect(Config {
+            session,
+            api_id,
+            api_hash,
+            params: InitParams::default(),
+        })
+        .await
+        .map_err(|e| format!("Failed to reconnect: {}", e))?;
+
+        // Verify we're still authorized
+        let is_authorized = client.is_authorized().await
+            .map_err(|e| format!("Failed to check auth after reconnect: {}", e))?;
+
+        if !is_authorized {
+            return Err("Session expired. Please log in again.".to_string());
+        }
+
+        // Save session after successful reconnect
+        Self::save_session_to_file(client.session(), &session_file)
+            .map_err(|e| format!("Failed to save session after reconnect: {}", e))?;
+
+        // Clear cache since connection was reset
+        *self.cache_loaded.write().await = false;
+        self.chat_cache.write().await.clear();
+
+        *self.client.write().await = Some(client);
+        log::info!("Reconnected successfully");
+
+        Ok(())
+    }
+
     /// Subscribe to Telegram events
     pub fn subscribe(&self) -> broadcast::Receiver<TelegramEvent> {
         self.event_tx.subscribe()
@@ -253,6 +328,8 @@ impl TelegramClient {
             let config = self.config.read().unwrap();
             (config.session_file.clone(), config.api_id, config.api_hash.clone())
         };
+
+        log::info!("Session file path for connect: {:?}", session_file);
 
         let session = Session::load_file_or_create(&session_file)
             .map_err(|e| format!("Failed to load session: {}", e))?;
@@ -292,7 +369,7 @@ impl TelegramClient {
         }
 
         // Save session - propagate errors to ensure session integrity
-        client.session().save_to_file(&session_file)
+        Self::save_session_to_file(client.session(), &session_file)
             .map_err(|e| format!("Failed to save session after connect: {}", e))?;
 
         *self.client.write().await = Some(client);
@@ -328,6 +405,7 @@ impl TelegramClient {
         log::info!("Sending auth code");
 
         let session_file = self.config.read().unwrap().session_file.clone();
+        log::info!("Session file path: {:?}", session_file);
 
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
@@ -351,7 +429,7 @@ impl TelegramClient {
                 *self.current_user.write().await = Some(current_user);
 
                 // Save session - propagate errors to ensure session integrity
-                client.session().save_to_file(&session_file)
+                Self::save_session_to_file(client.session(), &session_file)
                     .map_err(|e| format!("Failed to save session after sign in: {}", e))?;
 
                 self.set_auth_state(AuthState::Ready).await;
@@ -410,7 +488,7 @@ impl TelegramClient {
                 *self.current_user.write().await = Some(current_user);
 
                 // Save session - propagate errors to ensure session integrity
-                client.session().save_to_file(&session_file)
+                Self::save_session_to_file(client.session(), &session_file)
                     .map_err(|e| format!("Failed to save session after password check: {}", e))?;
 
                 self.set_auth_state(AuthState::Ready).await;
@@ -496,10 +574,23 @@ impl TelegramClient {
         self.chat_cache.write().await.clear();
     }
 
-    /// Get chat list (dialogs) with optional filters
+    /// Get chat list (dialogs) with optional filters (with auto-reconnect on connection failure)
     pub async fn get_chats(&self, limit: i32, filters: Option<ChatFilters>) -> Result<Vec<Chat>, String> {
         log::info!("Getting chats, limit: {}", limit);
 
+        // Try the operation, reconnect and retry once on connection error
+        match self.get_chats_inner(limit, filters.clone()).await {
+            Ok(chats) => Ok(chats),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error getting chats, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.get_chats_inner(limit, filters).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_chats_inner(&self, limit: i32, filters: Option<ChatFilters>) -> Result<Vec<Chat>, String> {
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -820,15 +911,33 @@ impl TelegramClient {
         Ok(chats)
     }
 
-    /// Get messages from a chat
+    /// Get messages from a chat (with auto-reconnect on connection failure)
     pub async fn get_chat_messages(
+        &self,
+        chat_id: i64,
+        limit: i32,
+        from_message_id: Option<i64>,
+    ) -> Result<Vec<Message>, String> {
+        log::info!("Getting messages for chat {}, limit: {}", chat_id, limit);
+
+        // Try the operation, reconnect and retry once on connection error
+        match self.get_chat_messages_inner(chat_id, limit, from_message_id).await {
+            Ok(messages) => Ok(messages),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error getting messages, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.get_chat_messages_inner(chat_id, limit, from_message_id).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_chat_messages_inner(
         &self,
         chat_id: i64,
         limit: i32,
         _from_message_id: Option<i64>,
     ) -> Result<Vec<Message>, String> {
-        log::info!("Getting messages for chat {}, limit: {}", chat_id, limit);
-
         // Try to get chat from cache first
         let chat = match self.get_cached_chat(chat_id).await {
             Some(c) => c,
@@ -880,10 +989,23 @@ impl TelegramClient {
         Ok(messages)
     }
 
-    /// Send a text message
+    /// Send a text message (with auto-reconnect on connection failure)
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<Message, String> {
         log::info!("Sending message to chat {}", chat_id);
 
+        // Try the operation, reconnect and retry once on connection error
+        match self.send_message_inner(chat_id, text).await {
+            Ok(message) => Ok(message),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error sending message, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.send_message_inner(chat_id, text).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn send_message_inner(&self, chat_id: i64, text: &str) -> Result<Message, String> {
         // Get chat from cache
         let chat = match self.get_cached_chat(chat_id).await {
             Some(c) => c,
@@ -918,10 +1040,23 @@ impl TelegramClient {
         Ok(message)
     }
 
-    /// Get contacts
+    /// Get contacts (with auto-reconnect on connection failure)
     pub async fn get_contacts(&self) -> Result<Vec<User>, String> {
         log::info!("Getting contacts");
 
+        // Try the operation, reconnect and retry once on connection error
+        match self.get_contacts_inner().await {
+            Ok(users) => Ok(users),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error getting contacts, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.get_contacts_inner().await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_contacts_inner(&self) -> Result<Vec<User>, String> {
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -950,10 +1085,23 @@ impl TelegramClient {
         Ok(users)
     }
 
-    /// Get contacts with their access hashes (needed for certain API calls)
+    /// Get contacts with their access hashes (needed for certain API calls, with auto-reconnect)
     pub async fn get_contacts_with_access_hash(&self) -> Result<Vec<(i64, i64)>, String> {
         log::info!("Getting contacts with access hashes");
 
+        // Try the operation, reconnect and retry once on connection error
+        match self.get_contacts_with_access_hash_inner().await {
+            Ok(users) => Ok(users),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error getting contacts with access hash, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.get_contacts_with_access_hash_inner().await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_contacts_with_access_hash_inner(&self) -> Result<Vec<(i64, i64)>, String> {
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -977,10 +1125,23 @@ impl TelegramClient {
         Ok(users)
     }
 
-    /// Get chat folders using MTProto GetDialogFilters
+    /// Get chat folders using MTProto GetDialogFilters (with auto-reconnect on connection failure)
     pub async fn get_folders(&self) -> Result<Vec<Folder>, String> {
         log::info!("Getting folders");
 
+        // Try the operation, reconnect and retry once on connection error
+        match self.get_folders_inner().await {
+            Ok(folders) => Ok(folders),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error getting folders, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.get_folders_inner().await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_folders_inner(&self) -> Result<Vec<Folder>, String> {
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -1048,10 +1209,23 @@ impl TelegramClient {
         Ok(folders)
     }
 
-    /// Get common chats/groups with a specific user
+    /// Get common chats/groups with a specific user (with auto-reconnect on connection failure)
     pub async fn get_common_chats(&self, user_id: i64, access_hash: i64) -> Result<Vec<CommonChat>, String> {
         log::info!("Getting common chats for user {}", user_id);
 
+        // Try the operation, reconnect and retry once on connection error
+        match self.get_common_chats_inner(user_id, access_hash).await {
+            Ok(chats) => Ok(chats),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error getting common chats, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.get_common_chats_inner(user_id, access_hash).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_common_chats_inner(&self, user_id: i64, access_hash: i64) -> Result<Vec<CommonChat>, String> {
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -1123,10 +1297,23 @@ impl TelegramClient {
         Ok(common_chats)
     }
 
-    /// Remove (kick) a user from a chat
+    /// Remove (kick) a user from a chat (with auto-reconnect on connection failure)
     pub async fn kick_chat_member(&self, chat: &tl::enums::Chat, user_id: i64, access_hash: i64) -> Result<(), String> {
         log::info!("Kicking user {} from chat", user_id);
 
+        // Try the operation, reconnect and retry once on connection error
+        match self.kick_chat_member_inner(chat, user_id, access_hash).await {
+            Ok(()) => Ok(()),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error kicking chat member, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.kick_chat_member_inner(chat, user_id, access_hash).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn kick_chat_member_inner(&self, chat: &tl::enums::Chat, user_id: i64, access_hash: i64) -> Result<(), String> {
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
