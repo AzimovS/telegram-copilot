@@ -71,13 +71,15 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
     briefingStore.setError(null);
 
     try {
-      // Get chats with unread messages from Telegram (with filters)
-      const filters = chatFiltersFromSettings(chatFilters, folders);
+      // Get chats with unread messages from Telegram (with filters + unread_only)
+      const baseFilters = chatFiltersFromSettings(chatFilters, folders);
+      const filters = { ...baseFilters, includeUnreadOnly: true };
       const filtersHash = JSON.stringify(filters);
 
       // Use cached chats if available (2 min TTL for chat list)
       const shouldRefreshChats = chatStore.shouldRefreshChats(2, filtersHash);
-      const chats = await chatStore.loadChats(100, filters, force || shouldRefreshChats);
+      const chats = await chatStore.loadChats(500, filters, force || shouldRefreshChats);
+      // Backend already filters for unread only, but double-check
       const unreadChats = chats.filter((c) => c.unreadCount > 0);
 
       if (unreadChats.length === 0) {
@@ -113,15 +115,16 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
         summary: `${chat.unreadCount} new messages in large group`,
       }));
 
-      // Get recent messages for each unread chat
+      // Get recent messages for each unread chat (no limit on number of chats)
       const chatContexts = [];
-      const chatsToProcess = smallChats.slice(0, 20);
-      for (let i = 0; i < chatsToProcess.length; i++) {
-        const chat = chatsToProcess[i];
+      for (let i = 0; i < smallChats.length; i++) {
+        const chat = smallChats[i];
         try {
           // Use cached messages if available (2 min TTL for messages)
           const shouldRefreshMsgs = chatStore.shouldRefreshMessages(chat.id, 2);
-          const messages = await chatStore.loadMessages(chat.id, 15, undefined, force || shouldRefreshMsgs);
+          // Fetch unread_count messages, but cap at 30 (min 5 for fallback)
+          const messageCount = Math.min(Math.max(chat.unreadCount, 5), 30);
+          const messages = await chatStore.loadMessages(chat.id, messageCount, undefined, force || shouldRefreshMsgs);
 
           chatContexts.push({
             chat_id: chat.id,
@@ -141,7 +144,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
             is_private_chat: chat.type === "private",
           });
           // Small delay between requests to avoid rate limiting (only if fetching fresh)
-          if ((force || shouldRefreshMsgs) && i < chatsToProcess.length - 1) {
+          if ((force || shouldRefreshMsgs) && i < smallChats.length - 1) {
             await new Promise((r) => setTimeout(r, 50));
           }
         } catch (e) {
@@ -280,7 +283,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
         <h2 className="text-2xl font-bold">{getGreeting()}</h2>
         <div className="flex items-center gap-2">
           {data?.cached && data.cache_age && (
-            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+            <span className="text-xs bg-violet-100/50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 px-2 py-1 rounded-full border border-violet-200/50 dark:border-violet-800/40">
               Cached {data.cache_age}
             </span>
           )}
@@ -302,8 +305,8 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
 
       {/* Error Banner (when we have stale data) */}
       {error && data && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center justify-between">
-          <span className="text-sm text-red-700">Failed to refresh: {error}</span>
+        <div className="bg-red-100/50 dark:bg-red-950/30 border border-red-200/50 dark:border-red-800/50 rounded-lg p-3 flex items-center justify-between">
+          <span className="text-sm text-red-700 dark:text-red-400">Failed to refresh: {error}</span>
           <Button variant="ghost" size="sm" onClick={() => load(true)} disabled={loading}>
             Retry
           </Button>
@@ -313,23 +316,23 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
       {/* Stats Bar */}
       {data && (
         <div className="grid grid-cols-3 gap-4">
-          <div className="p-4 rounded-lg bg-orange-50 border border-orange-200">
-            <p className="text-3xl font-bold text-orange-600">
+          <div className="p-4 rounded-lg bg-amber-100/40 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/40">
+            <p className="text-3xl font-bold text-amber-700 dark:text-amber-400">
               {data.stats.needs_response_count}
             </p>
-            <p className="text-sm text-orange-600/70">Need Reply</p>
+            <p className="text-sm text-amber-600/70 dark:text-amber-500/70">Need Reply</p>
           </div>
-          <div className="p-4 rounded-lg bg-blue-50 border border-blue-200">
-            <p className="text-3xl font-bold text-blue-600">
+          <div className="p-4 rounded-lg bg-sky-100/40 dark:bg-sky-950/30 border border-sky-200/50 dark:border-sky-800/40">
+            <p className="text-3xl font-bold text-sky-700 dark:text-sky-400">
               {data.stats.fyi_count}
             </p>
-            <p className="text-sm text-blue-600/70">FYI</p>
+            <p className="text-sm text-sky-600/70 dark:text-sky-500/70">FYI</p>
           </div>
-          <div className="p-4 rounded-lg bg-gray-50 border border-gray-200">
-            <p className="text-3xl font-bold text-gray-600">
+          <div className="p-4 rounded-lg bg-zinc-100/40 dark:bg-zinc-800/30 border border-zinc-200/50 dark:border-zinc-700/40">
+            <p className="text-3xl font-bold text-zinc-600 dark:text-zinc-300">
               {data.stats.total_unread}
             </p>
-            <p className="text-sm text-gray-600/70">Unread</p>
+            <p className="text-sm text-zinc-500/70 dark:text-zinc-400/70">Unread</p>
           </div>
         </div>
       )}

@@ -107,7 +107,7 @@ pub fn run() {
     let telegram_client = Arc::new(TelegramClient::new(telegram_config));
     let outreach_manager = Arc::new(outreach::OutreachManager::new());
     let outreach_manager_clone = outreach_manager.clone();
-    let rate_limiter = Arc::new(RateLimiter::new(60)); // 60 seconds min interval between messages
+    let rate_limiter = Arc::new(RateLimiter::new(30)); // 30 seconds min interval between messages
     let user_hash_cache = Arc::new(offboard::UserAccessHashCache::new());
     let chat_data_cache = Arc::new(offboard::ChatDataCache::new());
 

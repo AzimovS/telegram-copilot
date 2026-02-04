@@ -17,6 +17,8 @@ export interface ChatFilters {
   selectedFolderIds: number[];
   // Pre-computed list of chat IDs from selected folders (union of all includedChatIds)
   folderChatIds: number[];
+  // Only include chats with unread messages (unread_count > 0)
+  includeUnreadOnly?: boolean;
 }
 
 export function chatFiltersFromSettings(

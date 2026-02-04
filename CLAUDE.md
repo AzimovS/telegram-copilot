@@ -104,7 +104,7 @@ backend/
 
 ## Critical Constraints
 
-- **Rate Limits**: Outreach features must maintain 60+ second delays between messages; handle FLOOD_WAIT errors gracefully
+- **Rate Limits**: Outreach features must maintain 30+ second delays between messages; handle FLOOD_WAIT errors gracefully
 - **Scope System**: AI features only process chats within user-selected scopes (folders, chat types, or manual selection)
 - **Local-First**: Telegram data stays on device; only scoped chat content goes to AI backend
 - **No LLM Keys in Client**: All AI calls route through the Python backend

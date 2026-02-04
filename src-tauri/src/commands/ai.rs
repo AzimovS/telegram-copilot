@@ -183,12 +183,12 @@ async fn process_chat_for_briefing(
     let chat_title = sanitize_chat_title(&chat.chat_title);
     let chat_type = ChatType::from_str(&chat.chat_type).to_string();
 
-    // Take last 10 messages
+    // Take last 30 messages (increased from 10 for better context)
     let messages: Vec<(String, String)> = chat
         .messages
         .iter()
         .rev()
-        .take(10)
+        .take(30)
         .rev()
         .map(|m| {
             (

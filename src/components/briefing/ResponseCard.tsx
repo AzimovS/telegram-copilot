@@ -80,10 +80,10 @@ export function ResponseCard({
   // Sent state - show confirmation
   if (sent) {
     return (
-      <Card className="bg-green-50 border-green-200">
+      <Card className="bg-emerald-100/40 dark:bg-emerald-950/30 border-emerald-200/50 dark:border-emerald-800/40">
         <CardContent className="py-6 text-center">
-          <p className="text-green-700 font-medium">
-            ✅ Sent to {item.chat_name}
+          <p className="text-emerald-700 dark:text-emerald-400 font-medium">
+            Sent to {item.chat_name}
           </p>
         </CardContent>
       </Card>
@@ -108,13 +108,13 @@ export function ResponseCard({
           </button>
           {/* Priority Badge */}
           <span
-            className={`text-xs px-2 py-1 rounded-full ${
+            className={`text-xs px-2 py-1 rounded-full border ${
               item.priority === "urgent"
-                ? "bg-red-100 text-red-700"
-                : "bg-orange-100 text-orange-700"
+                ? "bg-red-100/50 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-200/50 dark:border-red-800/40"
+                : "bg-amber-100/50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200/50 dark:border-amber-800/40"
             }`}
           >
-            {item.priority === "urgent" ? "🔴 Urgent" : "🟠 Reply"}
+            {item.priority === "urgent" ? "Urgent" : "Reply"}
           </span>
         </div>
       </CardHeader>
@@ -141,8 +141,8 @@ export function ResponseCard({
 
         {/* Send Error Banner */}
         {sendError && (
-          <div className="flex items-center justify-between gap-2 p-2 bg-red-50 border border-red-200 rounded text-sm">
-            <span className="text-red-700">Failed to send: {sendError}</span>
+          <div className="flex items-center justify-between gap-2 p-2 bg-red-100/50 dark:bg-red-950/30 border border-red-200/50 dark:border-red-800/50 rounded text-sm">
+            <span className="text-red-700 dark:text-red-400">Failed to send: {sendError}</span>
             <Button
               variant="outline"
               size="sm"
