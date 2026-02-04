@@ -83,6 +83,9 @@ pub struct ChatFilters {
     // Empty = no folder filtering, non-empty = only show chats with these IDs
     #[serde(default)]
     pub folder_chat_ids: Vec<i64>,
+    // Only include chats with unread messages (unread_count > 0)
+    #[serde(default)]
+    pub include_unread_only: bool,
 }
 
 fn default_true() -> bool {
@@ -776,6 +779,12 @@ impl TelegramClient {
                     }
                 }
                 // Groups/channels without member_count pass through (shown)
+            }
+
+            // Check unread_only filter
+            if filters.include_unread_only && unread_count == 0 {
+                cache.insert(chat.id(), dialog.chat.clone());
+                continue;
             }
 
             // Note: Folder filter is now applied at the top as early exit (OR logic)

@@ -71,7 +71,7 @@ The Outreach view enables bulk messaging to multiple contacts with personalizati
 **Elements**:
 1. **Title**: "📨 Outreach" (H2)
 2. **Hint Text**: 
-   - "Send now or schedule messages. Use {{name}} for personalization. Messages are sent with 60s delay to avoid rate limits."
+   - "Send now or schedule messages. Use {{name}} for personalization. Messages are sent with 30s delay to avoid rate limits."
    - Gray text, smaller font
 
 **Behavior**:
@@ -378,7 +378,7 @@ contact.tags.includes(selectedTag)
 4. Builds request body:
    - `chat_ids`: Selected contact IDs
    - `message`: Message text
-   - `delay_seconds`: 60 (hardcoded)
+   - `delay_seconds`: 30 (hardcoded)
    - `schedule_date`: ISO string (if scheduled)
 5. POST request to `/outreach/send`
 6. Backend processing (sequential):
@@ -386,7 +386,7 @@ contact.tags.includes(selectedTag)
      - Gets contact entity
      - Replaces `{{name}}` with first name (or "there" if no first name)
      - Sends message (now or scheduled)
-     - Waits 60 seconds before next (except last)
+     - Waits 30 seconds before next (except last)
      - Handles rate limits
 7. On success:
    - `result` updated with stats
@@ -405,7 +405,7 @@ contact.tags.includes(selectedTag)
 - **Error**: "❌ {error message}" in red
 
 **Rate Limit Handling**:
-- If rate limited: Waits required time (max 60s), continues
+- If rate limited: Waits required time (max 30s), continues
 - Rate limited contacts counted separately
 - Operation continues despite rate limits
 
@@ -552,7 +552,7 @@ contact.tags.includes(selectedTag)
 
 **Behavior**:
 - Backend catches `FloodWaitError`
-- Waits required time (max 60 seconds)
+- Waits required time (max 30 seconds)
 - Continues with next contact
 - Rate limited contact marked in results
 - Result shows: "({X} rate limited)"
@@ -674,7 +674,7 @@ contact.tags.includes(selectedTag)
 
 ### Delay Between Messages
 
-**Fixed Delay**: 60 seconds between each message
+**Fixed Delay**: 30 seconds between each message
 - Applied automatically
 - Not configurable by user
 - Helps avoid Telegram rate limits
@@ -682,7 +682,7 @@ contact.tags.includes(selectedTag)
 ### Rate Limit Handling
 
 **During Send**:
-- If rate limited: Waits required time (max 60s)
+- If rate limited: Waits required time (max 30s)
 - Continues with next contact
 - Rate limited contact counted separately
 - Result shows rate limited count
@@ -716,7 +716,7 @@ User Action → send() → POST /outreach/send
     ├─> Get entity
     ├─> Personalize message
     ├─> Send (now or scheduled)
-    ├─> Wait 60s (except last)
+    ├─> Wait 30s (except last)
     └─> Handle errors
   → Return results
   → Update result state
@@ -741,6 +741,6 @@ User Action → send() → POST /outreach/send
 - Message personalization with `{{name}}`
 - Scheduling with datetime picker
 - Preview before sending (first 10 contacts)
-- Sequential sending with 60s delay
+- Sequential sending with 30s delay
 - Rate limit handling with automatic retry
 - Result feedback with success/failure counts

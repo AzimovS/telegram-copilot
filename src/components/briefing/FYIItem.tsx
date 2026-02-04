@@ -28,7 +28,7 @@ export function FYIItem({ item, onOpenChat }: FYIItemProps) {
 
       {/* Count (Center) */}
       <div className="text-center">
-        <span className="text-sm bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+        <span className="text-sm bg-sky-100/50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-400 border border-sky-200/50 dark:border-sky-800/40 px-2 py-0.5 rounded-full">
           {item.unread_count}
         </span>
       </div>

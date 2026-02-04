@@ -307,7 +307,7 @@ AI-powered overview of **unread chats within selected scope**.
 
 #### Rate-limit protection
 
-* Minimum 60 seconds between messages
+* Minimum 30 seconds between messages
 * Automatic pause on FLOOD_WAIT
 * Resume when safe
 
