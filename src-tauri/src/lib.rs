@@ -1,4 +1,5 @@
 mod ai;
+mod cache;
 mod commands;
 mod db;
 pub mod error;
@@ -6,6 +7,7 @@ mod telegram;
 mod utils;
 
 use ai::OpenAIClient;
+use cache::{BriefingCache, ContactsCache, SummaryCache};
 use commands::{ai as ai_commands, auth, chats, contacts, offboard, outreach, scopes};
 use utils::rate_limiter::RateLimiter;
 use std::path::PathBuf;
@@ -122,6 +124,11 @@ pub fn run() {
 
     let openai_client = Arc::new(OpenAIClient::new(openai_api_key));
 
+    // Initialize caches for AI responses and contacts
+    let briefing_cache = Arc::new(BriefingCache::new());
+    let summary_cache = Arc::new(SummaryCache::new());
+    let contacts_cache = Arc::new(ContactsCache::new());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(telegram_client.clone())
@@ -130,6 +137,9 @@ pub fn run() {
         .manage(user_hash_cache)
         .manage(chat_data_cache)
         .manage(openai_client)
+        .manage(briefing_cache)
+        .manage(summary_cache)
+        .manage(contacts_cache)
         .setup(move |app| {
             // Initialize database
             let app_dir = match app.path().app_data_dir() {

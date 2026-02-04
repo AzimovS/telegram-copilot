@@ -7,7 +7,7 @@ import type {
   SortDirection,
 } from "@/types/contacts";
 import * as tauri from "@/lib/tauri";
-import { getDefaultTags } from "./settingsStore";
+import { getDefaultTags, getCacheTTL } from "./settingsStore";
 
 interface ContactStore {
   contacts: Contact[];
@@ -84,20 +84,23 @@ export const useContactStore = create<ContactStore>((set, get) => ({
     set({ error: null });
 
     try {
+      // Get TTL from settings
+      const cacheTTL = getCacheTTL();
+
       // Backend now enriches contacts with chat data (lastContactDate, daysSinceContact, unreadCount)
-      const contacts = await tauri.getContacts() as Contact[];
+      const response = await tauri.getContacts(forceRefresh, cacheTTL.contactsTTLMinutes);
+      const contacts = response.contacts as Contact[];
 
       // Merge default tags (from settings) with tags from contacts
       const contactTags = contacts.flatMap((c) => c.tags);
       const defaultTags = getDefaultTags();
       const allTags = [...new Set([...defaultTags, ...contactTags])].sort();
 
-      // For now, we don't have cache info from tauri, set as fresh
       set({
         contacts,
         allTags,
-        cached: false,
-        cacheAge: null,
+        cached: response.cached,
+        cacheAge: response.cacheAge,
       });
     } catch (error) {
       const errorStr = String(error);

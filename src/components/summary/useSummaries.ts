@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import * as tauri from "@/lib/tauri";
 import { chatFiltersFromSettings } from "@/lib/tauri";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useSummaryStore } from "@/stores/summaryStore";
+import { useChatStore } from "@/stores/chatStore";
 import type { Folder } from "@/types/telegram";
 import {
   ChatSummary,
@@ -29,21 +31,33 @@ interface UseSummariesOptions {
   sortBy: SortOption;
 }
 
+// Generate a hash from filter options for cache invalidation
+function hashFilterOptions(options: UseSummariesOptions): string {
+  return JSON.stringify(options);
+}
+
 export function useSummaries(options: UseSummariesOptions) {
   const { typeFilter, timeFilter, needsResponseOnly, sortBy } = options;
 
   const globalChatFilters = useSettingsStore((state) => state.chatFilters);
-  const [summaries, setSummaries] = useState<ChatSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [isCached, setIsCached] = useState(false);
-  const [cacheAge, setCacheAge] = useState<string | null>(null);
+  const cacheTTL = useSettingsStore((state) => state.cacheTTL);
+  const summaryStore = useSummaryStore();
+  const chatStore = useChatStore();
+
   const [regeneratingChatId, setRegeneratingChatId] = useState<number | null>(null);
-  const [offset, setOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const isLoadingRef = useRef(false);
+
+  const {
+    summaries,
+    isLoading,
+    error,
+    isCached,
+    cacheAge,
+    offset,
+    hasMore,
+    isLoadingMore,
+  } = summaryStore;
 
   const pageSize = 10;
 
@@ -123,18 +137,36 @@ export function useSummaries(options: UseSummariesOptions) {
 
   const loadSummaries = useCallback(
     async (regenerate = false, append = false) => {
-      if (append) {
-        setIsLoadingMore(true);
-      } else {
-        setIsLoading(true);
-        setOffset(0);
-        setSummaries([]);
+      // Prevent concurrent loads
+      if (isLoadingRef.current && !append) {
+        return;
       }
-      setError(null);
+
+      const currentFilterHash = hashFilterOptions(options) + JSON.stringify(globalChatFilters);
+
+      // Check if we should skip loading (use cached data)
+      if (!regenerate && !append && !summaryStore.shouldRefresh(cacheTTL.summaryTTLMinutes, currentFilterHash)) {
+        return;
+      }
+
+      isLoadingRef.current = true;
+
+      if (append) {
+        summaryStore.setLoadingMore(true);
+      } else {
+        summaryStore.setLoading(true);
+        summaryStore.setOffset(0);
+        summaryStore.setFilterHash(currentFilterHash);
+      }
+      summaryStore.setError(null);
 
       try {
         const filters = chatFiltersFromSettings(globalChatFilters, folders);
-        const chats = (await tauri.getChats(100, filters)) as Chat[];
+        const filtersHash = JSON.stringify(filters);
+
+        // Use cached chats if available (2 min TTL for chat list)
+        const shouldRefreshChats = chatStore.shouldRefreshChats(2, filtersHash);
+        const chats = await chatStore.loadChats(100, filters, regenerate || shouldRefreshChats) as Chat[];
 
         let filteredChats = chats;
         if (typeFilter !== "all") {
@@ -153,11 +185,13 @@ export function useSummaries(options: UseSummariesOptions) {
           currentOffset,
           currentOffset + pageSize
         );
-        setHasMore(currentOffset + pageSize < filteredChats.length);
+        summaryStore.setHasMore(currentOffset + pageSize < filteredChats.length);
 
         if (paginatedChats.length === 0) {
-          if (!append) setSummaries([]);
-          setLastUpdated(new Date());
+          if (!append) summaryStore.setSummaries([]);
+          summaryStore.setLoading(false);
+          summaryStore.setLoadingMore(false);
+          isLoadingRef.current = false;
           return;
         }
 
@@ -167,7 +201,9 @@ export function useSummaries(options: UseSummariesOptions) {
         for (let i = 0; i < paginatedChats.length; i++) {
           const chat = paginatedChats[i];
           try {
-            const messages = await tauri.getChatMessages(chat.id, MESSAGES_PER_CHAT);
+            // Use cached messages if available (2 min TTL for messages)
+            const shouldRefreshMsgs = chatStore.shouldRefreshMessages(chat.id, 2);
+            const messages = await chatStore.loadMessages(chat.id, MESSAGES_PER_CHAT, undefined, regenerate || shouldRefreshMsgs);
             const memberCount = chat.memberCount || 0;
             const isLargeGroup =
               chat.type === "group" && memberCount >= LARGE_GROUP_THRESHOLD;
@@ -197,8 +233,9 @@ export function useSummaries(options: UseSummariesOptions) {
               });
             }
 
-            if (i < paginatedChats.length - 1) {
-              await new Promise((r) => setTimeout(r, 100));
+            // Small delay between requests only if fetching fresh
+            if ((regenerate || shouldRefreshMsgs) && i < paginatedChats.length - 1) {
+              await new Promise((r) => setTimeout(r, 50));
             }
           } catch (e) {
             console.warn(`Failed to get messages for chat ${chat.id}:`, e);
@@ -210,26 +247,28 @@ export function useSummaries(options: UseSummariesOptions) {
           if (needsResponseOnly) {
             newSummaries = newSummaries.filter((s) => s.needsResponse);
           }
-          if (append) {
-            setSummaries((prev) => sortSummaries([...prev, ...newSummaries]));
-            setOffset(currentOffset + pageSize);
-          } else {
-            setSummaries(newSummaries);
-            setOffset(pageSize);
-          }
-          setLastUpdated(new Date());
-          setCacheAge(null);
-          setIsCached(false);
+          summaryStore.setSummaries(newSummaries, append);
+          summaryStore.setOffset(currentOffset + pageSize);
+          summaryStore.setCacheInfo(false, null);
+          summaryStore.setLoading(false);
+          summaryStore.setLoadingMore(false);
+          isLoadingRef.current = false;
           return;
         }
 
         if (chatContexts.length === 0) {
-          if (!append) setSummaries([]);
-          setLastUpdated(new Date());
+          if (!append) summaryStore.setSummaries([]);
+          summaryStore.setLoading(false);
+          summaryStore.setLoadingMore(false);
+          isLoadingRef.current = false;
           return;
         }
 
-        const data = await tauri.generateBatchSummaries(chatContexts, regenerate);
+        const data = await tauri.generateBatchSummaries(
+          chatContexts,
+          regenerate,
+          cacheTTL.summaryTTLMinutes
+        );
 
         let newSummaries: ChatSummary[] = data.summaries
           .filter((s) => s && typeof s === "object" && s.chat_id != null)
@@ -254,32 +293,22 @@ export function useSummaries(options: UseSummariesOptions) {
 
         newSummaries = sortSummaries(newSummaries);
 
-        if (append) {
-          setSummaries((prev) => sortSummaries([...prev, ...newSummaries]));
-          setOffset(currentOffset + pageSize);
-        } else {
-          setSummaries(newSummaries);
-          setOffset(pageSize);
-        }
+        summaryStore.setSummaries(newSummaries, append);
+        summaryStore.setOffset(currentOffset + pageSize);
 
-        setLastUpdated(new Date());
-        setIsCached(data.cached);
-        if (data.cached && data.generated_at) {
-          setCacheAge(formatCacheAge(data.generated_at));
-        } else {
-          setCacheAge(null);
-        }
+        summaryStore.setCacheInfo(data.cached, data.cached && data.generated_at ? formatCacheAge(data.generated_at) : null);
       } catch (err) {
         console.error("Failed to load summaries:", err);
-        setError(
+        summaryStore.setError(
           err instanceof Error ? err.message : "Failed to connect to AI backend."
         );
       } finally {
-        setIsLoading(false);
-        setIsLoadingMore(false);
+        summaryStore.setLoading(false);
+        summaryStore.setLoadingMore(false);
+        isLoadingRef.current = false;
       }
     },
-    [typeFilter, timeFilter, needsResponseOnly, offset, sortSummaries, globalChatFilters, folders]
+    [typeFilter, timeFilter, needsResponseOnly, offset, sortSummaries, globalChatFilters, folders, cacheTTL, summaryStore, chatStore, options]
   );
 
   const regenerateSingle = useCallback(
@@ -291,7 +320,7 @@ export function useSummaries(options: UseSummariesOptions) {
         const existingSummary = summaries.find((s) => s.chatId === chatId);
         if (!existingSummary || existingSummary.isLargeGroup) return;
 
-        const messages = await tauri.getChatMessages(chatId, MESSAGES_PER_CHAT);
+        const messages = await chatStore.loadMessages(chatId, MESSAGES_PER_CHAT, undefined, true);
 
         const data = await tauri.generateBatchSummaries(
           [
@@ -309,30 +338,24 @@ export function useSummaries(options: UseSummariesOptions) {
               })),
             },
           ],
-          true
+          true,
+          cacheTTL.summaryTTLMinutes
         );
 
         if (data && Array.isArray(data.summaries) && data.summaries.length > 0) {
           const newSummary = data.summaries[0];
           if (newSummary && typeof newSummary === "object" && newSummary.chat_id != null) {
-            setSummaries((prev) =>
-              prev.map((s): ChatSummary =>
-                s.chatId === chatId
-                  ? {
-                      chatId: newSummary.chat_id,
-                      chatTitle: newSummary.chat_title ?? s.chatTitle,
-                      chatType: newSummary.chat_type ?? s.chatType,
-                      summary: newSummary.summary ?? "No summary available",
-                      keyPoints: Array.isArray(newSummary.key_points) ? newSummary.key_points : [],
-                      actionItems: Array.isArray(newSummary.action_items) ? newSummary.action_items : [],
-                      sentiment: (newSummary.sentiment ?? "neutral") as "positive" | "neutral" | "negative",
-                      needsResponse: Boolean(newSummary.needs_response),
-                      messageCount: typeof newSummary.message_count === "number" ? newSummary.message_count : s.messageCount,
-                      lastMessageDate: typeof newSummary.last_message_date === "number" ? newSummary.last_message_date : s.lastMessageDate,
-                    }
-                  : s
-              )
-            );
+            summaryStore.updateSummary(chatId, {
+              chatTitle: newSummary.chat_title ?? existingSummary.chatTitle,
+              chatType: newSummary.chat_type ?? existingSummary.chatType,
+              summary: newSummary.summary ?? "No summary available",
+              keyPoints: Array.isArray(newSummary.key_points) ? newSummary.key_points : [],
+              actionItems: Array.isArray(newSummary.action_items) ? newSummary.action_items : [],
+              sentiment: (newSummary.sentiment ?? "neutral") as "positive" | "neutral" | "negative",
+              needsResponse: Boolean(newSummary.needs_response),
+              messageCount: typeof newSummary.message_count === "number" ? newSummary.message_count : existingSummary.messageCount,
+              lastMessageDate: typeof newSummary.last_message_date === "number" ? newSummary.last_message_date : existingSummary.lastMessageDate,
+            });
           }
         }
       } catch (err) {
@@ -341,25 +364,29 @@ export function useSummaries(options: UseSummariesOptions) {
         setRegeneratingChatId(null);
       }
     },
-    [summaries]
+    [summaries, cacheTTL.summaryTTLMinutes, summaryStore, chatStore]
   );
 
+  // Re-sort when sortBy changes
   useEffect(() => {
     if (summaries.length > 0) {
-      setSummaries((prev) => sortSummaries(prev));
+      summaryStore.setSummaries(sortSummaries(summaries));
     }
-  }, [sortBy, sortSummaries]);
+  }, [sortBy]);
 
+  // Initial load and filter changes
   useEffect(() => {
-    loadSummaries();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [typeFilter, timeFilter, needsResponseOnly, globalChatFilters, folders]);
+    const currentFilterHash = hashFilterOptions(options) + JSON.stringify(globalChatFilters);
+    if (summaryStore.shouldRefresh(cacheTTL.summaryTTLMinutes, currentFilterHash)) {
+      loadSummaries();
+    }
+  }, [typeFilter, timeFilter, needsResponseOnly, globalChatFilters, folders, cacheTTL.summaryTTLMinutes]);
 
   return {
     summaries,
     isLoading,
     error,
-    lastUpdated,
+    lastUpdated: summaryStore.lastLoadedAt ? new Date(summaryStore.lastLoadedAt) : null,
     isCached,
     cacheAge,
     regeneratingChatId,

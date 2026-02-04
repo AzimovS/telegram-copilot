@@ -89,7 +89,7 @@ export function ChatFiltersDialog({ open, onOpenChange }: ChatFiltersDialogProps
   };
 
   const handleCancel = () => {
-    setLocalFilters(chatFilters); // Reset to original
+    setLocalFilters(chatFilters);
     onOpenChange(false);
   };
 

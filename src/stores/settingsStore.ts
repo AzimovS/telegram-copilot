@@ -41,15 +41,31 @@ const DEFAULT_CHAT_FILTERS: ChatFilterSettings = {
   selectedFolderIds: [],
 };
 
+// Cache TTL settings (in minutes)
+export interface CacheTTLSettings {
+  briefingTTLMinutes: number; // default: 60 (1 hour)
+  summaryTTLMinutes: number; // default: 360 (6 hours)
+  contactsTTLMinutes: number; // default: 10080 (7 days)
+}
+
+const DEFAULT_CACHE_TTL: CacheTTLSettings = {
+  briefingTTLMinutes: 60,
+  summaryTTLMinutes: 360,
+  contactsTTLMinutes: 10080,
+};
+
 interface SettingsStore {
   defaultTags: string[];
   chatFilters: ChatFilterSettings;
+  cacheTTL: CacheTTLSettings;
   onboardingCompleted: boolean;
   addDefaultTag: (tag: string) => void;
   removeDefaultTag: (tag: string) => void;
   resetDefaultTags: () => void;
   setChatFilters: (filters: Partial<ChatFilterSettings>) => void;
   resetChatFilters: () => void;
+  setCacheTTL: (ttl: Partial<CacheTTLSettings>) => void;
+  resetCacheTTL: () => void;
   completeOnboarding: () => void;
   resetOnboarding: () => void;
 }
@@ -59,6 +75,7 @@ export const useSettingsStore = create<SettingsStore>()(
     (set) => ({
       defaultTags: INITIAL_DEFAULT_TAGS,
       chatFilters: DEFAULT_CHAT_FILTERS,
+      cacheTTL: DEFAULT_CACHE_TTL,
       onboardingCompleted: false,
 
       addDefaultTag: (tag) => {
@@ -92,6 +109,16 @@ export const useSettingsStore = create<SettingsStore>()(
         set({ chatFilters: DEFAULT_CHAT_FILTERS });
       },
 
+      setCacheTTL: (ttl) => {
+        set((state) => ({
+          cacheTTL: { ...state.cacheTTL, ...ttl },
+        }));
+      },
+
+      resetCacheTTL: () => {
+        set({ cacheTTL: DEFAULT_CACHE_TTL });
+      },
+
       completeOnboarding: () => {
         set({ onboardingCompleted: true });
       },
@@ -102,7 +129,7 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: "settings-storage",
-      version: 2,
+      version: 3,
       migrate: (persistedState, version) => {
         const state = persistedState as SettingsStore;
 
@@ -160,6 +187,15 @@ export const useSettingsStore = create<SettingsStore>()(
               groupSizeRange,
               selectedFolderIds: oldFilters.selectedFolderIds ?? [],
             },
+            cacheTTL: DEFAULT_CACHE_TTL,
+          };
+        }
+
+        if (version === 2) {
+          // Migrate from v2 to v3: add cacheTTL settings
+          return {
+            ...state,
+            cacheTTL: DEFAULT_CACHE_TTL,
           };
         }
 
@@ -172,3 +208,4 @@ export const useSettingsStore = create<SettingsStore>()(
 // Export for use in other stores
 export const getDefaultTags = () => useSettingsStore.getState().defaultTags;
 export const getChatFilters = () => useSettingsStore.getState().chatFilters;
+export const getCacheTTL = () => useSettingsStore.getState().cacheTTL;

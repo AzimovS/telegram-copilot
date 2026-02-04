@@ -11,6 +11,7 @@ use crate::ai::{
         DraftMessage, DraftResponse, FYIItem, OpenAIMessage, ResponseItem,
     },
 };
+use crate::cache::{format_cache_age, generate_chat_ids_key, BriefingCache, SummaryCache};
 use chrono::Utc;
 use std::sync::Arc;
 use tauri::State;
@@ -19,13 +20,16 @@ use tauri::State;
 #[tauri::command]
 pub async fn generate_briefing_v2(
     client: State<'_, Arc<OpenAIClient>>,
+    cache: State<'_, Arc<BriefingCache>>,
     chats: Vec<ChatContext>,
     force_refresh: bool,
+    ttl_minutes: i64,
 ) -> Result<BriefingV2Response, String> {
     log::info!(
-        "Generating briefing V2 for {} chats (force_refresh: {})",
+        "Generating briefing V2 for {} chats (force_refresh: {}, ttl: {}m)",
         chats.len(),
-        force_refresh
+        force_refresh,
+        ttl_minutes
     );
 
     if chats.is_empty() {
@@ -41,6 +45,23 @@ pub async fn generate_briefing_v2(
             cached: false,
             cache_age: None,
         });
+    }
+
+    // Generate cache key from chat IDs
+    let chat_ids: Vec<i64> = chats.iter().map(|c| c.chat_id).collect();
+    let cache_key = generate_chat_ids_key(&chat_ids);
+    let ttl_secs = (ttl_minutes * 60) as u64;
+
+    // Check cache unless force refresh
+    if !force_refresh {
+        if let Some((cached_response, age_secs)) = cache.0.get(&cache_key, ttl_secs).await {
+            log::info!("Returning cached briefing (age: {}s)", age_secs);
+            return Ok(BriefingV2Response {
+                cached: true,
+                cache_age: Some(format_cache_age(age_secs)),
+                ..cached_response
+            });
+        }
     }
 
     // Process chats in parallel
@@ -89,7 +110,7 @@ pub async fn generate_briefing_v2(
         priority_order(&a.priority).cmp(&priority_order(&b.priority))
     });
 
-    Ok(BriefingV2Response {
+    let response = BriefingV2Response {
         needs_response: needs_response.clone(),
         fyi_summaries: fyi_summaries.clone(),
         stats: BriefingStats {
@@ -100,7 +121,12 @@ pub async fn generate_briefing_v2(
         generated_at: Utc::now().to_rfc3339(),
         cached: false,
         cache_age: None,
-    })
+    };
+
+    // Store in cache
+    cache.0.set(&cache_key, response.clone()).await;
+
+    Ok(response)
 }
 
 /// Internal result from processing a chat
@@ -267,13 +293,16 @@ async fn process_chat_for_briefing(
 #[tauri::command]
 pub async fn generate_batch_summaries(
     client: State<'_, Arc<OpenAIClient>>,
+    cache: State<'_, Arc<SummaryCache>>,
     chats: Vec<ChatSummaryContext>,
     regenerate: bool,
+    ttl_minutes: i64,
 ) -> Result<BatchSummaryResponse, String> {
     log::info!(
-        "Generating batch summaries for {} chats (regenerate: {})",
+        "Generating batch summaries for {} chats (regenerate: {}, ttl: {}m)",
         chats.len(),
-        regenerate
+        regenerate,
+        ttl_minutes
     );
 
     if chats.is_empty() {
@@ -283,6 +312,22 @@ pub async fn generate_batch_summaries(
             generated_at: Utc::now().timestamp(),
             cached: false,
         });
+    }
+
+    // Generate cache key from chat IDs
+    let chat_ids: Vec<i64> = chats.iter().map(|c| c.chat_id).collect();
+    let cache_key = generate_chat_ids_key(&chat_ids);
+    let ttl_secs = (ttl_minutes * 60) as u64;
+
+    // Check cache unless regenerate
+    if !regenerate {
+        if let Some((cached_response, age_secs)) = cache.0.get(&cache_key, ttl_secs).await {
+            log::info!("Returning cached summaries (age: {}s)", age_secs);
+            return Ok(BatchSummaryResponse {
+                cached: true,
+                ..cached_response
+            });
+        }
     }
 
     // Process chats in parallel
@@ -308,12 +353,17 @@ pub async fn generate_batch_summaries(
         }
     }
 
-    Ok(BatchSummaryResponse {
+    let response = BatchSummaryResponse {
         summaries: summaries.clone(),
         total_count: summaries.len() as i32,
         generated_at: Utc::now().timestamp(),
         cached: false,
-    })
+    };
+
+    // Store in cache
+    cache.0.set(&cache_key, response.clone()).await;
+
+    Ok(response)
 }
 
 /// Process a single chat for summary

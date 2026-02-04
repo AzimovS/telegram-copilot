@@ -110,8 +110,17 @@ export async function invalidateChatCache(): Promise<void> {
 }
 
 // Contact commands
-export async function getContacts(): Promise<Contact[]> {
-  return invoke("get_contacts");
+export interface ContactsResponse {
+  contacts: Contact[];
+  cached: boolean;
+  cacheAge: string | null;
+}
+
+export async function getContacts(
+  forceRefresh?: boolean,
+  ttlMinutes?: number
+): Promise<ContactsResponse> {
+  return invoke("get_contacts", { forceRefresh, ttlMinutes });
 }
 
 export async function addContactTag(
@@ -291,16 +300,18 @@ export interface DraftResponse {
 
 export async function generateBriefingV2(
   chats: ChatContext[],
-  forceRefresh: boolean
+  forceRefresh: boolean,
+  ttlMinutes: number
 ): Promise<BriefingV2Response> {
-  return invoke("generate_briefing_v2", { chats, forceRefresh });
+  return invoke("generate_briefing_v2", { chats, forceRefresh, ttlMinutes });
 }
 
 export async function generateBatchSummaries(
   chats: ChatSummaryContext[],
-  regenerate: boolean
+  regenerate: boolean,
+  ttlMinutes: number
 ): Promise<BatchSummaryResponse> {
-  return invoke("generate_batch_summaries", { chats, regenerate });
+  return invoke("generate_batch_summaries", { chats, regenerate, ttlMinutes });
 }
 
 export async function generateDraft(

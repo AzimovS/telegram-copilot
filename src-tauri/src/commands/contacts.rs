@@ -1,10 +1,11 @@
+use crate::cache::{format_cache_age, ContactsCache};
 use crate::db::contacts as db_contacts;
-use crate::telegram::TelegramClient;
 use crate::telegram::client::ChatFilters;
+use crate::telegram::TelegramClient;
 use serde::{Deserialize, Serialize};
-use tauri::State;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,10 +22,44 @@ pub struct ContactWithMetadata {
     pub unread_count: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactsResponse {
+    pub contacts: Vec<ContactWithMetadata>,
+    pub cached: bool,
+    pub cache_age: Option<String>,
+}
+
+const CONTACTS_CACHE_KEY: &str = "contacts:all";
+
 #[tauri::command]
 pub async fn get_contacts(
     client: State<'_, Arc<TelegramClient>>,
-) -> Result<Vec<ContactWithMetadata>, String> {
+    cache: State<'_, Arc<ContactsCache>>,
+    force_refresh: Option<bool>,
+    ttl_minutes: Option<i64>,
+) -> Result<ContactsResponse, String> {
+    let force_refresh = force_refresh.unwrap_or(false);
+    let ttl_minutes = ttl_minutes.unwrap_or(10080); // Default 7 days
+    let ttl_secs = (ttl_minutes * 60) as u64;
+
+    log::info!(
+        "Getting contacts (force_refresh: {}, ttl: {}m)",
+        force_refresh,
+        ttl_minutes
+    );
+
+    // Check cache unless force refresh
+    if !force_refresh {
+        if let Some((cached_contacts, age_secs)) = cache.0.get(CONTACTS_CACHE_KEY, ttl_secs).await {
+            log::info!("Returning cached contacts (age: {}s)", age_secs);
+            return Ok(ContactsResponse {
+                contacts: cached_contacts,
+                cached: true,
+                cache_age: Some(format_cache_age(age_secs)),
+            });
+        }
+    }
     let users = client.get_contacts().await?;
     let now = chrono::Utc::now().timestamp();
 
@@ -85,7 +120,14 @@ pub async fn get_contacts(
         });
     }
 
-    Ok(contacts)
+    // Store in cache
+    cache.0.set(CONTACTS_CACHE_KEY, contacts.clone()).await;
+
+    Ok(ContactsResponse {
+        contacts,
+        cached: false,
+        cache_age: None,
+    })
 }
 
 #[tauri::command]
