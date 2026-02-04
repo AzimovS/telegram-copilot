@@ -11,7 +11,6 @@ import {
   timeFilters,
   LARGE_GROUP_THRESHOLD,
   MESSAGES_PER_CHAT,
-  API_URL,
 } from "./types";
 
 interface Chat {
@@ -230,34 +229,18 @@ export function useSummaries(options: UseSummariesOptions) {
           return;
         }
 
-        const response = await fetch(`${API_URL}/api/summary/batch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chats: chatContexts, regenerate }),
-        });
-
-        if (!response.ok) throw new Error(`Backend error: ${response.status}`);
-
-        const data = await response.json();
-
-        // Validate response structure
-        if (!data || typeof data !== "object") {
-          throw new Error("Invalid response from backend: expected object");
-        }
-        if (!Array.isArray(data.summaries)) {
-          throw new Error("Invalid response from backend: missing summaries array");
-        }
+        const data = await tauri.generateBatchSummaries(chatContexts, regenerate);
 
         let newSummaries: ChatSummary[] = data.summaries
-          .filter((s: any) => s && typeof s === "object" && s.chat_id != null)
-          .map((s: any) => ({
+          .filter((s) => s && typeof s === "object" && s.chat_id != null)
+          .map((s) => ({
             chatId: s.chat_id,
             chatTitle: s.chat_title ?? "Unknown Chat",
             chatType: s.chat_type ?? "unknown",
             summary: s.summary ?? "No summary available",
             keyPoints: Array.isArray(s.key_points) ? s.key_points : [],
             actionItems: Array.isArray(s.action_items) ? s.action_items : [],
-            sentiment: s.sentiment ?? "neutral",
+            sentiment: (s.sentiment ?? "neutral") as "positive" | "neutral" | "negative",
             needsResponse: Boolean(s.needs_response),
             messageCount: typeof s.message_count === "number" ? s.message_count : 0,
             lastMessageDate: typeof s.last_message_date === "number" ? s.last_message_date : 0,
@@ -310,40 +293,30 @@ export function useSummaries(options: UseSummariesOptions) {
 
         const messages = await tauri.getChatMessages(chatId, MESSAGES_PER_CHAT);
 
-        const response = await fetch(`${API_URL}/api/summary/batch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chats: [
-              {
-                chat_id: chatId,
-                chat_title: existingSummary.chatTitle,
-                chat_type: existingSummary.chatType,
-                unread_count: 0,
-                messages: messages.map((m: any) => ({
-                  id: Number(m.id),
-                  sender_name: m.senderName,
-                  text: m.content.type === "text" ? m.content.text : "[Media]",
-                  date: m.date,
-                  is_outgoing: m.isOutgoing,
-                })),
-              },
-            ],
-            regenerate: true,
-          }),
-        });
+        const data = await tauri.generateBatchSummaries(
+          [
+            {
+              chat_id: chatId,
+              chat_title: existingSummary.chatTitle,
+              chat_type: existingSummary.chatType,
+              unread_count: 0,
+              messages: messages.map((m: any) => ({
+                id: Number(m.id),
+                sender_name: m.senderName,
+                text: m.content.type === "text" ? m.content.text : "[Media]",
+                date: m.date,
+                is_outgoing: m.isOutgoing,
+              })),
+            },
+          ],
+          true
+        );
 
-        if (!response.ok) throw new Error(`Backend error: ${response.status}`);
-
-        const data = await response.json();
-
-        // Validate response structure
         if (data && Array.isArray(data.summaries) && data.summaries.length > 0) {
           const newSummary = data.summaries[0];
-          // Ensure the summary has required fields
           if (newSummary && typeof newSummary === "object" && newSummary.chat_id != null) {
             setSummaries((prev) =>
-              prev.map((s) =>
+              prev.map((s): ChatSummary =>
                 s.chatId === chatId
                   ? {
                       chatId: newSummary.chat_id,
@@ -352,7 +325,7 @@ export function useSummaries(options: UseSummariesOptions) {
                       summary: newSummary.summary ?? "No summary available",
                       keyPoints: Array.isArray(newSummary.key_points) ? newSummary.key_points : [],
                       actionItems: Array.isArray(newSummary.action_items) ? newSummary.action_items : [],
-                      sentiment: newSummary.sentiment ?? "neutral",
+                      sentiment: (newSummary.sentiment ?? "neutral") as "positive" | "neutral" | "negative",
                       needsResponse: Boolean(newSummary.needs_response),
                       messageCount: typeof newSummary.message_count === "number" ? newSummary.message_count : s.messageCount,
                       lastMessageDate: typeof newSummary.last_message_date === "number" ? newSummary.last_message_date : s.lastMessageDate,

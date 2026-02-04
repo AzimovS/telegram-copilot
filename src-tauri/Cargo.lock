@@ -4510,6 +4510,7 @@ dependencies = [
  "grammers-tl-types",
  "log",
  "once_cell",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

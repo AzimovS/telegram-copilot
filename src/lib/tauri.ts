@@ -183,3 +183,130 @@ export async function getCommonGroups(userId: number): Promise<CommonGroup[]> {
 export async function removeFromGroup(chatId: number, userId: number): Promise<void> {
   return invoke("remove_from_group", { chatId, userId });
 }
+
+// AI commands
+
+export interface ChatContext {
+  chat_id: number;
+  chat_title: string;
+  chat_type: string;
+  messages: {
+    id: number;
+    sender_name: string;
+    text: string;
+    date: number;
+    is_outgoing: boolean;
+  }[];
+  unread_count?: number;
+  last_message_is_outgoing?: boolean;
+  has_unanswered_question?: boolean;
+  hours_since_last_activity?: number;
+  is_private_chat?: boolean;
+}
+
+export interface ChatSummaryContext {
+  chat_id: number;
+  chat_title: string;
+  chat_type: string;
+  messages: {
+    id: number;
+    sender_name: string;
+    text: string;
+    date: number;
+    is_outgoing: boolean;
+  }[];
+  unread_count?: number;
+}
+
+export interface DraftMessage {
+  sender_name: string;
+  text: string;
+  is_outgoing: boolean;
+}
+
+export interface ResponseItem {
+  id: number;
+  chat_id: number;
+  chat_name: string;
+  chat_type: "dm" | "group" | "channel";
+  unread_count: number;
+  last_message: string | null;
+  last_message_date: string | null;
+  priority: "urgent" | "needs_reply";
+  summary: string;
+  suggested_reply: string | null;
+}
+
+export interface FYIItemData {
+  id: number;
+  chat_id: number;
+  chat_name: string;
+  chat_type: "dm" | "group" | "channel";
+  unread_count: number;
+  last_message: string | null;
+  last_message_date: string | null;
+  priority: "fyi";
+  summary: string;
+}
+
+export interface BriefingStats {
+  needs_response_count: number;
+  fyi_count: number;
+  total_unread: number;
+}
+
+export interface BriefingV2Response {
+  needs_response: ResponseItem[];
+  fyi_summaries: FYIItemData[];
+  stats: BriefingStats;
+  generated_at: string;
+  cached: boolean;
+  cache_age?: string;
+}
+
+export interface ChatSummaryResult {
+  chat_id: number;
+  chat_title: string;
+  chat_type: string;
+  summary: string;
+  key_points: string[];
+  action_items: string[];
+  sentiment: string;
+  needs_response: boolean;
+  message_count: number;
+  last_message_date: number;
+}
+
+export interface BatchSummaryResponse {
+  summaries: ChatSummaryResult[];
+  total_count: number;
+  generated_at: number;
+  cached: boolean;
+}
+
+export interface DraftResponse {
+  draft: string;
+  chat_id: number;
+}
+
+export async function generateBriefingV2(
+  chats: ChatContext[],
+  forceRefresh: boolean
+): Promise<BriefingV2Response> {
+  return invoke("generate_briefing_v2", { chats, forceRefresh });
+}
+
+export async function generateBatchSummaries(
+  chats: ChatSummaryContext[],
+  regenerate: boolean
+): Promise<BatchSummaryResponse> {
+  return invoke("generate_batch_summaries", { chats, regenerate });
+}
+
+export async function generateDraft(
+  chatId: number,
+  chatTitle: string,
+  messages: DraftMessage[]
+): Promise<DraftResponse> {
+  return invoke("generate_draft", { chatId, chatTitle, messages });
+}

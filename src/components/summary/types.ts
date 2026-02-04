@@ -19,7 +19,6 @@ export interface ChatSummary {
 
 export const LARGE_GROUP_THRESHOLD = 500;
 export const MESSAGES_PER_CHAT = 50;
-export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export const typeFilters: {
   value: ChatTypeFilter;

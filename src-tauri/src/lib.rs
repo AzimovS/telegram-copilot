@@ -1,10 +1,12 @@
+mod ai;
 mod commands;
 mod db;
 pub mod error;
 mod telegram;
 mod utils;
 
-use commands::{auth, chats, contacts, offboard, outreach, scopes};
+use ai::OpenAIClient;
+use commands::{ai as ai_commands, auth, chats, contacts, offboard, outreach, scopes};
 use utils::rate_limiter::RateLimiter;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -107,6 +109,19 @@ pub fn run() {
     let user_hash_cache = Arc::new(offboard::UserAccessHashCache::new());
     let chat_data_cache = Arc::new(offboard::ChatDataCache::new());
 
+    // Initialize OpenAI client
+    // Try env var first, then compile-time embedded key
+    let openai_api_key = std::env::var("OPENAI_API_KEY")
+        .unwrap_or_else(|_| option_env!("OPENAI_API_KEY").unwrap_or("").to_string());
+
+    if openai_api_key.is_empty() {
+        log::warn!("OPENAI_API_KEY not set. AI features will not work.");
+    } else {
+        log::info!("OpenAI API key configured: {}...", &openai_api_key[..8.min(openai_api_key.len())]);
+    }
+
+    let openai_client = Arc::new(OpenAIClient::new(openai_api_key));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(telegram_client.clone())
@@ -114,6 +129,7 @@ pub fn run() {
         .manage(rate_limiter)
         .manage(user_hash_cache)
         .manage(chat_data_cache)
+        .manage(openai_client)
         .setup(move |app| {
             // Initialize database
             let app_dir = match app.path().app_data_dir() {
@@ -208,6 +224,10 @@ pub fn run() {
             // Offboard commands
             offboard::get_common_groups,
             offboard::remove_from_group,
+            // AI commands
+            ai_commands::generate_briefing_v2,
+            ai_commands::generate_batch_summaries,
+            ai_commands::generate_draft,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

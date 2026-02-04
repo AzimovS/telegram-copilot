@@ -1,4 +1,4 @@
-# UI/UX Requirements - Telegram CoPilot
+# UI/UX Requirements - Telegram Copilot
 
 ## Overall Application Structure
 

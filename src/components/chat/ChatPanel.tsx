@@ -103,8 +103,6 @@ export function ChatPanel({ chatId, chatName, chatType, onClose }: ChatPanelProp
 
     setIsGeneratingDraft(true);
     try {
-      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-
       // Prepare messages for the AI - take last 20 messages for context
       const recentMessages = messages.slice(-20).map((msg) => ({
         sender_name: msg.isOutgoing ? "You" : (msg.senderName || "User"),
@@ -112,28 +110,18 @@ export function ChatPanel({ chatId, chatName, chatType, onClose }: ChatPanelProp
         is_outgoing: msg.isOutgoing,
       }));
 
-      const response = await fetch(`${API_URL}/api/draft/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          chat_title: chat?.title || chatName || "Chat",
-          messages: recentMessages,
-        }),
-      });
+      const result = await tauri.generateDraft(
+        chatId,
+        chat?.title || chatName || "Chat",
+        recentMessages
+      );
 
-      if (!response.ok) {
-        throw new Error(`Failed to generate draft: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setDraft(data.draft);
+      setDraft(result.draft);
     } catch (error) {
       console.error("Failed to generate AI draft:", error);
-      // Show more specific error message
       const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes("Failed to fetch") || errorMessage.includes("NetworkError")) {
-        setDraft("Could not connect to AI backend. Make sure the backend server is running (cd backend && uvicorn app.main:app --reload --port 8000)");
+      if (errorMessage.includes("API key not configured")) {
+        setDraft("OpenAI API key not configured. Add OPENAI_API_KEY to your .env file.");
       } else {
         setDraft(`Draft generation failed: ${errorMessage}`);
       }
