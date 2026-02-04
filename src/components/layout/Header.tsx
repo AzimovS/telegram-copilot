@@ -13,6 +13,7 @@ import {
   Moon,
   Check,
   Filter,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +24,7 @@ import {
 import { useAuthStore } from "@/stores/authStore";
 import { useThemeStore, type Theme } from "@/stores/themeStore";
 import { ChatFiltersDialog } from "@/components/settings/ChatFiltersDialog";
+import { CacheSettingsDialog } from "@/components/settings/CacheSettingsDialog";
 
 export type ViewType = "briefing" | "summary" | "chats" | "contacts" | "outreach" | "offboard";
 
@@ -50,6 +52,7 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
   const { currentUser, logout } = useAuthStore();
   const { theme, setTheme } = useThemeStore();
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [cacheSettingsOpen, setCacheSettingsOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -125,7 +128,7 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
                   </div>
                 </div>
                 <div className="border-t pt-3">
-                  <h4 className="font-medium text-sm mb-1">Filters</h4>
+                  <h4 className="font-medium text-sm mb-1">Settings</h4>
                   <button
                     onClick={() => setFiltersOpen(true)}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
@@ -133,11 +136,19 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
                     <Filter className="h-4 w-4" />
                     <span className="flex-1 text-left">Chat Filters</span>
                   </button>
+                  <button
+                    onClick={() => setCacheSettingsOpen(true)}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                  >
+                    <Clock className="h-4 w-4" />
+                    <span className="flex-1 text-left">Cache Settings</span>
+                  </button>
                 </div>
               </div>
             </PopoverContent>
           </Popover>
           <ChatFiltersDialog open={filtersOpen} onOpenChange={setFiltersOpen} />
+          <CacheSettingsDialog open={cacheSettingsOpen} onOpenChange={setCacheSettingsOpen} />
           <Button
             variant="ghost"
             size="icon"
