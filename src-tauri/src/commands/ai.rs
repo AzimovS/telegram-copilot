@@ -374,12 +374,12 @@ async fn process_chat_for_summary(
     let chat_title = sanitize_chat_title(&chat.chat_title);
     let chat_type = ChatType::from_str(&chat.chat_type).to_string();
 
-    // Take last 30 messages
+    // Take last 50 messages (matches frontend MESSAGES_PER_CHAT constant)
     let messages: Vec<(String, String)> = chat
         .messages
         .iter()
         .rev()
-        .take(30)
+        .take(50)
         .rev()
         .map(|m| {
             (
