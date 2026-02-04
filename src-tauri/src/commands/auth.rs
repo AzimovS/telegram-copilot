@@ -1,3 +1,4 @@
+use crate::cache::{BriefingCache, ContactsCache, SummaryCache};
 use crate::telegram::TelegramClient;
 use crate::telegram::client::{AuthState, User};
 use tauri::State;
@@ -51,6 +52,14 @@ pub async fn get_current_user(
 #[tauri::command]
 pub async fn logout(
     client: State<'_, Arc<TelegramClient>>,
+    contacts_cache: State<'_, Arc<ContactsCache>>,
+    briefing_cache: State<'_, Arc<BriefingCache>>,
+    summary_cache: State<'_, Arc<SummaryCache>>,
 ) -> Result<(), String> {
+    // Clear all caches to prevent data leaking between accounts
+    contacts_cache.0.invalidate_all().await;
+    briefing_cache.0.invalidate_all().await;
+    summary_cache.0.invalidate_all().await;
+
     client.logout().await
 }

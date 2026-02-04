@@ -22,6 +22,7 @@ interface ScopeStore {
   excludeChat: (chatId: number) => void;
   includeChat: (chatId: number) => void;
   clearError: () => void;
+  reset: () => void;
 
   // Computed
   getCurrentConfig: () => ScopeConfig;
@@ -173,6 +174,15 @@ export const useScopeStore = create<ScopeStore>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
+
+  reset: () =>
+    set({
+      folders: [],
+      profiles: [],
+      activeScope: { profile: null, customConfig: null },
+      isLoading: false,
+      error: null,
+    }),
 
   getCurrentConfig: () => {
     const { activeScope } = get();

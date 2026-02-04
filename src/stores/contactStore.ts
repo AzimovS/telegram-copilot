@@ -42,6 +42,7 @@ interface ContactStore {
   setSortOption: (option: ContactSortOption) => void;
   clearError: () => void;
   clearWarning: () => void;
+  reset: () => void;
 
   // Computed
   getFilteredContacts: () => Contact[];
@@ -268,6 +269,25 @@ export const useContactStore = create<ContactStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
   clearWarning: () => set({ warning: null }),
+
+  reset: () =>
+    set({
+      contacts: [],
+      selectedContactId: null,
+      selectedIds: [],
+      filters: defaultFilters,
+      sortField: "lastContact",
+      sortDirection: "desc",
+      sortOption: "recent",
+      allTags: [],
+      isLoading: false,
+      isRefreshing: false,
+      isDeleting: false,
+      error: null,
+      warning: null,
+      cached: false,
+      cacheAge: null,
+    }),
 
   getFilteredContacts: () => {
     const { contacts, filters, sortField, sortDirection } = get();

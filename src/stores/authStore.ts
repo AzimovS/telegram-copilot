@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import type { AuthState, User } from "@/types/telegram";
 import * as tauri from "@/lib/tauri";
+import { useContactStore } from "./contactStore";
+import { useOutreachStore } from "./outreachStore";
+import { useChatStore } from "./chatStore";
+import { useScopeStore } from "./scopeStore";
+import { useBriefingStore } from "./briefingStore";
+import { useSummaryStore } from "./summaryStore";
+import { useSettingsStore } from "./settingsStore";
 
 interface AuthStore {
   authState: AuthState;
@@ -121,6 +128,20 @@ export const useAuthStore = create<AuthStore>((set) => ({
     set({ isLoading: true, error: null });
     try {
       await tauri.logout();
+
+      // Reset all stores to clear user-specific data
+      useContactStore.getState().reset();
+      useOutreachStore.getState().reset();
+      useChatStore.getState().reset();
+      useScopeStore.getState().reset();
+      useBriefingStore.getState().clear();
+      useSummaryStore.getState().clear();
+
+      // Reset onboarding so new account sees filter options
+      // Also reset chat filters since folder IDs are account-specific
+      useSettingsStore.getState().resetOnboarding();
+      useSettingsStore.getState().resetChatFilters();
+
       set({
         authState: { type: "waitPhoneNumber" },
         currentUser: null,
