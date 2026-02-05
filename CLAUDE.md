@@ -10,9 +10,11 @@ Telegram Copilot is a desktop Telegram client with AI-powered features for power
 
 - **Desktop**: Tauri v2 + React 19 + TypeScript + Vite
 - **Telegram**: Grammers (pure Rust MTProto client)
+- **AI**: Direct OpenAI API calls from Rust (gpt-4o-mini)
 - **Styling**: Tailwind CSS v4 + shadcn/ui (new-york style)
 - **State Management**: Zustand v5
-- **AI Backend**: FastAPI (Python) + Redis + OpenAI
+- **Database**: SQLite (bundled via rusqlite)
+- **Cache**: In-memory TTL cache
 
 ## Development Commands
 
@@ -28,12 +30,6 @@ npm run tauri dev
 
 # Build desktop app for distribution
 npm run tauri build
-
-# Backend (from backend/ directory)
-cd backend && uvicorn app.main:app --reload --port 8000
-
-# Backend with Docker
-cd backend && docker-compose up
 ```
 
 ## Testing
@@ -43,39 +39,34 @@ cd backend && docker-compose up
 npm test              # Watch mode
 npm test -- --run     # Run once and exit
 
-# Python backend tests (pytest + fakeredis)
-cd backend && pytest -v
-
 # Rust tests
 cd src-tauri && cargo test
 
 # TypeScript type check
 npx tsc --noEmit
 
-# Run all tests before committing
-npm test -- --run && cd backend && pytest -v && cd .. && cd src-tauri && cargo check && cd .. && npx tsc --noEmit
+# Run all checks before committing
+npm test -- --run && cd src-tauri && cargo check && cd .. && npx tsc --noEmit
 ```
 
 ## Architecture
 
-### Three-Tier Structure
+### Two-Tier Structure
 
 1. **Frontend** (`src/`) - React app running in Tauri webview
-2. **Rust Backend** (`src-tauri/`) - Tauri commands + Telegram client via Grammers
-3. **AI Backend** (`backend/`) - FastAPI service for LLM operations
+2. **Rust Backend** (`src-tauri/`) - Tauri commands + Telegram client + AI + SQLite
 
 ### Data Flow
 
 ```
-React Components → Zustand Stores → Tauri IPC → Rust Commands → Grammers/SQLite
-                                              → HTTP → FastAPI (AI operations)
+React Components → Zustand Stores → Tauri IPC → Rust Commands → Grammers/SQLite/OpenAI
 ```
 
 ### Frontend Communication
 
-- **Tauri IPC**: All Telegram operations go through `src/lib/tauri.ts` which wraps `@tauri-apps/api` invoke calls
+- **Tauri IPC**: All operations go through `src/lib/tauri.ts` which wraps `@tauri-apps/api` invoke calls
 - **Events**: Rust broadcasts real-time updates via Tauri events (e.g., `telegram://new-message`, `telegram://auth-state`)
-- **Stores**: Zustand stores in `src/stores/` manage state (authStore, chatStore, contactStore, outreachStore, scopeStore, themeStore)
+- **Stores**: Zustand stores in `src/stores/` manage state (authStore, briefingStore, chatStore, contactStore, outreachStore, scopeStore, settingsStore, summaryStore, themeStore)
 
 ### Main Views
 
@@ -93,21 +84,19 @@ src/
 └── types/               # TypeScript type definitions
 
 src-tauri/
-├── src/commands/        # Tauri command handlers (auth, chats, contacts, scopes, outreach)
-├── src/telegram/        # Grammers client wrapper
-└── src/db/              # SQLite operations
-
-backend/
-├── app/routers/         # FastAPI routes (briefing, summary, draft)
-└── app/services/        # AI and cache services
+├── src/ai/              # OpenAI client, prompts, types
+├── src/cache.rs         # In-memory TTL cache for AI responses
+├── src/commands/        # Tauri command handlers (auth, chats, contacts, scopes, outreach, ai)
+├── src/db/              # SQLite operations
+└── src/telegram/        # Grammers client wrapper
 ```
 
 ## Critical Constraints
 
 - **Rate Limits**: Outreach features must maintain 30+ second delays between messages; handle FLOOD_WAIT errors gracefully
 - **Scope System**: AI features only process chats within user-selected scopes (folders, chat types, or manual selection)
-- **Local-First**: Telegram data stays on device; only scoped chat content goes to AI backend
-- **No LLM Keys in Client**: All AI calls route through the Python backend
+- **Local-First**: All data stays on device; OpenAI API calls are made directly from the Rust backend
+- **Single App**: Everything runs in the Tauri app - no separate backend server needed
 
 ## Telegram Integration Notes
 
@@ -116,16 +105,20 @@ backend/
 - Auth flow: connect → send_phone_number → send_auth_code → send_password (if 2FA)
 - Contact operations include local SQLite storage for tags/notes
 
+## AI Integration
+
+- Direct OpenAI API calls from Rust (`src-tauri/src/ai/client.rs`)
+- Uses gpt-4o-mini model
+- Features: Briefings, Summaries, Draft generation
+- Responses cached in-memory with TTL (`src-tauri/src/cache.rs`)
+
 ## Git Commits
 
 Do not add Co-Authored-By lines to commit messages.
 
 ## Environment Variables
 
-Backend requires `.env` with:
-- `OPENAI_API_KEY` - For GPT-4o mini
-- `REDIS_URL` - Cache connection
-
-Tauri app requires Telegram API credentials in `src-tauri/.env`:
-- `TELEGRAM_API_ID`
-- `TELEGRAM_API_HASH`
+Create a `.env` file in the project root with:
+- `TELEGRAM_API_ID` - From https://my.telegram.org
+- `TELEGRAM_API_HASH` - From https://my.telegram.org
+- `OPENAI_API_KEY` - For AI features (optional, AI features disabled without it)
