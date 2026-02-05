@@ -514,6 +514,10 @@ impl TelegramClient {
         // Delete session file
         let _ = std::fs::remove_file(&session_file);
 
+        // Clear chat cache to prevent data leaking between accounts
+        *self.cache_loaded.write().await = false;
+        self.chat_cache.write().await.clear();
+
         *self.current_user.write().await = None;
         self.set_auth_state(AuthState::WaitPhoneNumber).await;
 

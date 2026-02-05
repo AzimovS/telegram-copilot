@@ -111,6 +111,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set({
         chats: newChats,
         lastChatsLoadedAt: Date.now(),
+        lastFiltersHash: hashFilters(filters),
         currentChatLimit: newLimit,
         hasMoreChats: gotMoreChats && newChats.length >= newLimit,
       });
