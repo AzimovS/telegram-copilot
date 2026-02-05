@@ -4,7 +4,7 @@ import { ChatItem } from "./ChatItem";
 import { Button } from "@/components/ui/button";
 import type { Chat } from "@/types/telegram";
 import { useState, useMemo } from "react";
-import { Loader2, MessageSquare, Users, Radio } from "lucide-react";
+import { Loader2, MessageSquare, Users, Radio, RefreshCw, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ChatTypeFilter = "all" | "private" | "group" | "channel";
@@ -14,6 +14,10 @@ interface ChatListProps {
   selectedChatId: number | null;
   onSelectChat: (chatId: number) => void;
   isLoading: boolean;
+  onRefresh?: () => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
 }
 
 const typeFilters: { value: ChatTypeFilter; label: string; icon: React.ReactNode }[] = [
@@ -28,6 +32,10 @@ export function ChatList({
   selectedChatId,
   onSelectChat,
   isLoading,
+  onRefresh,
+  onLoadMore,
+  hasMore = true,
+  isLoadingMore = false,
 }: ChatListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<ChatTypeFilter>("all");
@@ -74,9 +82,22 @@ export function ChatList({
       <div className="p-4 border-b space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Chats</h2>
-          <span className="text-sm text-muted-foreground">
-            {filteredChats.length} of {chats.length}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              {filteredChats.length} of {chats.length}
+            </span>
+            {onRefresh && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={onRefresh}
+                disabled={isLoading}
+              >
+                <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+              </Button>
+            )}
+          </div>
         </div>
 
         <SearchInput
@@ -117,19 +138,38 @@ export function ChatList({
             : "No chats yet"}
         </div>
       ) : (
-        <VirtualList
-          items={filteredChats}
-          estimateSize={72}
-          className="flex-1"
-          renderItem={(chat) => (
-            <ChatItem
-              key={chat.id}
-              chat={chat}
-              isSelected={chat.id === selectedChatId}
-              onClick={() => onSelectChat(chat.id)}
-            />
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <VirtualList
+            items={filteredChats}
+            estimateSize={72}
+            className="flex-1"
+            renderItem={(chat) => (
+              <ChatItem
+                key={chat.id}
+                chat={chat}
+                isSelected={chat.id === selectedChatId}
+                onClick={() => onSelectChat(chat.id)}
+              />
+            )}
+          />
+          {onLoadMore && hasMore && !searchQuery && typeFilter === "all" && (
+            <div className="p-3 border-t">
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={onLoadMore}
+                disabled={isLoadingMore}
+              >
+                {isLoadingMore ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 mr-2" />
+                )}
+                Load More Chats
+              </Button>
+            </div>
           )}
-        />
+        </div>
       )}
     </div>
   );

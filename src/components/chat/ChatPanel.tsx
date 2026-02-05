@@ -39,17 +39,16 @@ export function ChatPanel({ chatId, chatName, chatType, onClose }: ChatPanelProp
     const loadChat = async () => {
       setIsLoading(true);
       try {
-        // Get chat info - pass undefined for filters to get all chats
-        // This ensures we find the chat even if it doesn't match current filters
-        const chats = await tauri.getChats(100, undefined);
+        // First, get chat info (fast - uses cache)
+        // This also ensures the cache is populated before getChatMessages
+        const foundChat = await tauri.getChat(chatId);
         if (cancelled) return;
 
-        const foundChat = chats.find((c) => c.id === chatId);
         if (foundChat) {
           setChat(foundChat);
         }
 
-        // Get messages
+        // Then get messages (now cache is guaranteed to be loaded)
         const msgs = await tauri.getChatMessages(chatId, 50);
         if (cancelled) return;
 

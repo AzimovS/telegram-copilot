@@ -9,14 +9,7 @@ const mockInvoke = vi.mocked(invoke);
 describe("chatStore", () => {
   beforeEach(() => {
     // Reset the store to initial state before each test
-    useChatStore.setState({
-      chats: [],
-      selectedChatId: null,
-      messages: {},
-      isLoadingChats: false,
-      isLoadingMessages: false,
-      error: null,
-    });
+    useChatStore.getState().reset();
     vi.clearAllMocks();
   });
 
@@ -164,14 +157,16 @@ describe("chatStore", () => {
       expect(messages[2].id).toBe(10);
     });
 
-    it("replaces messages when not paginating", async () => {
+    it("replaces messages when force refreshing", async () => {
       useChatStore.setState({
         messages: { 123: [{ id: 10, chatId: 123 } as any] },
+        messagesLoadedAt: { 123: Date.now() },
       });
       const newMessages = [{ id: 20, chatId: 123 }];
       mockInvoke.mockResolvedValueOnce(newMessages);
 
-      await useChatStore.getState().loadMessages(123);
+      // Use forceRefresh to bypass cache
+      await useChatStore.getState().loadMessages(123, 50, undefined, true);
 
       expect(useChatStore.getState().messages[123]).toEqual(newMessages);
     });
@@ -179,7 +174,8 @@ describe("chatStore", () => {
     it("handles errors", async () => {
       mockInvoke.mockRejectedValueOnce(new Error("Load failed"));
 
-      await useChatStore.getState().loadMessages(123);
+      // No cached messages, so this will make the API call
+      await useChatStore.getState().loadMessages(123, 50, undefined, true);
 
       expect(useChatStore.getState().error).toBe("Error: Load failed");
     });

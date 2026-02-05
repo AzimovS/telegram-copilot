@@ -5,6 +5,7 @@ import { chatFiltersFromSettings, getFolders } from "@/lib/tauri";
 import type { Folder } from "@/types/telegram";
 
 const DEBOUNCE_MS = 300;
+const CACHE_TTL_MINUTES = 2; // Cache chats for 2 minutes
 
 export function useChats() {
   const {
@@ -12,24 +13,23 @@ export function useChats() {
     selectedChatId,
     messages,
     isLoadingChats,
+    isLoadingMoreChats,
     isLoadingMessages,
+    hasMoreChats,
     error,
     loadChats,
+    loadMoreChats,
     selectChat,
     loadMessages,
     sendMessage,
     clearError,
+    shouldRefreshChats,
   } = useChatStore();
 
   const chatFilters = useSettingsStore((state) => state.chatFilters);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [foldersLoaded, setFoldersLoaded] = useState(false);
-  const isInitialMount = useRef(true);
-
-  // Clear chats immediately on mount to prevent showing stale data
-  useEffect(() => {
-    useChatStore.setState({ chats: [], isLoadingChats: true });
-  }, []);
+  const lastFiltersHash = useRef<string | null>(null);
 
   // Load folders when component mounts or when selectedFolderIds changes
   useEffect(() => {
@@ -64,24 +64,36 @@ export function useChats() {
     // Wait for folders to be loaded before fetching chats
     if (!foldersLoaded) return;
 
-    // Skip debounce on initial mount for faster first load
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      const filters = chatFiltersFromSettings(chatFilters, folders);
+    const filters = chatFiltersFromSettings(chatFilters, folders);
+    const currentFiltersHash = JSON.stringify(filters);
+
+    // Check if we need to refresh (cache expired or filters changed)
+    const filtersChanged = lastFiltersHash.current !== currentFiltersHash;
+    const needsRefresh = shouldRefreshChats(CACHE_TTL_MINUTES, currentFiltersHash);
+
+    // If we have cached chats and don't need refresh, skip loading
+    if (!needsRefresh && !filtersChanged && chats.length > 0) {
+      lastFiltersHash.current = currentFiltersHash;
+      return;
+    }
+
+    // If filters changed, load immediately without debounce
+    if (filtersChanged || chats.length === 0) {
+      lastFiltersHash.current = currentFiltersHash;
       loadChats(50, filters);
       return;
     }
 
-    // Debounce subsequent filter changes
+    // Debounce background refresh
     const timeoutId = setTimeout(() => {
-      const filters = chatFiltersFromSettings(chatFilters, folders);
+      lastFiltersHash.current = currentFiltersHash;
       loadChats(50, filters);
     }, DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timeoutId);
     };
-  }, [loadChats, chatFilters, folders, foldersLoaded]);
+  }, [loadChats, chatFilters, folders, foldersLoaded, shouldRefreshChats, chats.length]);
 
   // Get messages for selected chat
   const selectedChatMessages = selectedChatId
@@ -109,11 +121,17 @@ export function useChats() {
     [selectedChatId, sendMessage]
   );
 
-  // Refresh with current filters
+  // Refresh with current filters (force refresh)
   const refresh = useCallback(() => {
     const filters = chatFiltersFromSettings(chatFilters, folders);
-    loadChats(50, filters);
+    loadChats(50, filters, true);
   }, [loadChats, chatFilters, folders]);
+
+  // Load more chats (pagination)
+  const loadMore = useCallback(() => {
+    const filters = chatFiltersFromSettings(chatFilters, folders);
+    loadMoreChats(filters);
+  }, [loadMoreChats, chatFilters, folders]);
 
   return {
     chats,
@@ -121,10 +139,13 @@ export function useChats() {
     selectedChatId,
     selectedChatMessages,
     isLoadingChats,
+    isLoadingMoreChats,
     isLoadingMessages,
+    hasMoreChats,
     error,
     selectChat,
     loadMoreMessages,
+    loadMoreChats: loadMore,
     sendMessage: sendToSelectedChat,
     refresh,
     clearError,

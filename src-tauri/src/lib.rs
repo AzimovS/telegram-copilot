@@ -212,6 +212,7 @@ pub fn run() {
             auth::logout,
             // Chat commands
             chats::get_chats,
+            chats::get_chat,
             chats::get_chat_messages,
             chats::send_message,
             chats::invalidate_chat_cache,
