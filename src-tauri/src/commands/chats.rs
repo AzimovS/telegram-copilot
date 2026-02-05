@@ -12,6 +12,14 @@ pub async fn get_chats(
 }
 
 #[tauri::command]
+pub async fn get_chat(
+    client: State<'_, Arc<TelegramClient>>,
+    chat_id: i64,
+) -> Result<Option<Chat>, String> {
+    client.get_chat(chat_id).await
+}
+
+#[tauri::command]
 pub async fn get_chat_messages(
     client: State<'_, Arc<TelegramClient>>,
     chat_id: i64,

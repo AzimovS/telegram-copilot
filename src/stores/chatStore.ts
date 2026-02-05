@@ -9,13 +9,17 @@ interface ChatStore {
   messages: Record<number, Message[]>;
   messagesLoadedAt: Record<number, number>; // Track when messages were loaded for each chat
   isLoadingChats: boolean;
+  isLoadingMoreChats: boolean;
   isLoadingMessages: boolean;
   error: string | null;
   lastChatsLoadedAt: number | null;
   lastFiltersHash: string | null;
+  currentChatLimit: number;
+  hasMoreChats: boolean;
 
   // Actions
   loadChats: (limit?: number, filters?: ChatFilters, forceRefresh?: boolean) => Promise<Chat[]>;
+  loadMoreChats: (filters?: ChatFilters) => Promise<Chat[]>;
   selectChat: (chatId: number | null) => void;
   loadMessages: (chatId: number, limit?: number, fromMessageId?: number, forceRefresh?: boolean) => Promise<Message[]>;
   sendMessage: (chatId: number, text: string) => Promise<void>;
@@ -36,18 +40,23 @@ function hashFilters(filters?: ChatFilters): string {
   return JSON.stringify(filters);
 }
 
+const CHAT_PAGE_SIZE = 50;
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   chats: [],
   selectedChatId: null,
   messages: {},
   messagesLoadedAt: {},
   isLoadingChats: false,
+  isLoadingMoreChats: false,
   isLoadingMessages: false,
   error: null,
   lastChatsLoadedAt: null,
   lastFiltersHash: null,
+  currentChatLimit: CHAT_PAGE_SIZE,
+  hasMoreChats: true,
 
-  loadChats: async (limit = 50, filters?: ChatFilters, forceRefresh = false) => {
+  loadChats: async (limit = CHAT_PAGE_SIZE, filters?: ChatFilters, forceRefresh = false) => {
     const filtersHash = hashFilters(filters);
     const { chats, lastFiltersHash } = get();
 
@@ -56,20 +65,61 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return chats;
     }
 
-    set({ isLoadingChats: true, error: null });
+    // Only show loading spinner if we have no cached chats to display
+    // This prevents flashing on background refreshes
+    const showLoading = chats.length === 0;
+    if (showLoading) {
+      set({ isLoadingChats: true, error: null });
+    } else {
+      set({ error: null });
+    }
+
     try {
       const newChats = (await tauri.getChats(limit, filters)) as Chat[];
       set({
         chats: newChats,
         lastChatsLoadedAt: Date.now(),
         lastFiltersHash: filtersHash,
+        currentChatLimit: limit,
+        hasMoreChats: newChats.length >= limit, // If we got fewer than requested, no more chats
       });
       return newChats;
     } catch (error) {
       set({ error: String(error) });
       return get().chats; // Return existing chats on error
     } finally {
-      set({ isLoadingChats: false });
+      if (showLoading) {
+        set({ isLoadingChats: false });
+      }
+    }
+  },
+
+  loadMoreChats: async (filters?: ChatFilters) => {
+    const { currentChatLimit, isLoadingMoreChats, hasMoreChats } = get();
+
+    if (isLoadingMoreChats || !hasMoreChats) {
+      return get().chats;
+    }
+
+    set({ isLoadingMoreChats: true, error: null });
+
+    try {
+      const newLimit = currentChatLimit + CHAT_PAGE_SIZE;
+      const newChats = (await tauri.getChats(newLimit, filters)) as Chat[];
+      const gotMoreChats = newChats.length > currentChatLimit;
+
+      set({
+        chats: newChats,
+        lastChatsLoadedAt: Date.now(),
+        currentChatLimit: newLimit,
+        hasMoreChats: gotMoreChats && newChats.length >= newLimit,
+      });
+      return newChats;
+    } catch (error) {
+      set({ error: String(error) });
+      return get().chats;
+    } finally {
+      set({ isLoadingMoreChats: false });
     }
   },
 
@@ -164,10 +214,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       messages: {},
       messagesLoadedAt: {},
       isLoadingChats: false,
+      isLoadingMoreChats: false,
       isLoadingMessages: false,
       error: null,
       lastChatsLoadedAt: null,
       lastFiltersHash: null,
+      currentChatLimit: CHAT_PAGE_SIZE,
+      hasMoreChats: true,
     }),
 
   shouldRefreshChats: (ttlMinutes, currentFiltersHash) => {

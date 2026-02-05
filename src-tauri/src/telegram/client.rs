@@ -574,6 +574,87 @@ impl TelegramClient {
         self.chat_cache.write().await.clear();
     }
 
+    /// Get a single chat by ID (optimized for fast lookups)
+    /// Uses cache first, then loads cache if needed
+    pub async fn get_chat(&self, chat_id: i64) -> Result<Option<Chat>, String> {
+        log::info!("Getting chat {}", chat_id);
+
+        // Try the operation, reconnect and retry once on connection error
+        match self.get_chat_inner(chat_id).await {
+            Ok(chat) => Ok(chat),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error getting chat, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.get_chat_inner(chat_id).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn get_chat_inner(&self, chat_id: i64) -> Result<Option<Chat>, String> {
+        // 1. Try cache first (fast path)
+        if let Some(chat) = self.get_cached_chat(chat_id).await {
+            return Ok(Some(self.convert_cached_chat_to_chat(&chat)));
+        }
+
+        // 2. Cache miss - load cache if not loaded
+        self.ensure_cache_loaded(200).await?;
+
+        // 3. Try cache again
+        if let Some(chat) = self.get_cached_chat(chat_id).await {
+            return Ok(Some(self.convert_cached_chat_to_chat(&chat)));
+        }
+
+        // Chat not found
+        Ok(None)
+    }
+
+    /// Convert a cached grammers chat to our Chat type
+    fn convert_cached_chat_to_chat(&self, chat: &grammers_client::types::Chat) -> Chat {
+        let (chat_type, is_bot, is_contact) = match chat {
+            grammers_client::types::Chat::User(u) => {
+                ("private", u.is_bot(), u.raw.contact)
+            }
+            grammers_client::types::Chat::Group(_) => ("group", false, false),
+            grammers_client::types::Chat::Channel(_) => ("channel", false, false),
+        };
+
+        let title = match chat {
+            grammers_client::types::Chat::User(u) => {
+                format!("{} {}", u.first_name(), u.last_name().unwrap_or(""))
+            }
+            grammers_client::types::Chat::Group(g) => g.title().to_string(),
+            grammers_client::types::Chat::Channel(c) => c.title().to_string(),
+        };
+
+        let member_count = match chat {
+            grammers_client::types::Chat::User(_) => None,
+            grammers_client::types::Chat::Group(g) => {
+                match &g.raw {
+                    tl::enums::Chat::Chat(c) => Some(c.participants_count),
+                    _ => None,
+                }
+            }
+            grammers_client::types::Chat::Channel(c) => c.raw.participants_count,
+        };
+
+        Chat {
+            id: chat.id(),
+            chat_type: chat_type.to_string(),
+            title: title.trim().to_string(),
+            unread_count: 0, // Not available from cached chat alone
+            is_pinned: false, // Not available from cached chat alone
+            order: 0,
+            photo: None,
+            last_message: None,
+            member_count,
+            is_muted: false,
+            is_archived: false,
+            is_bot,
+            is_contact,
+        }
+    }
+
     /// Get chat list (dialogs) with optional filters (with auto-reconnect on connection failure)
     pub async fn get_chats(&self, limit: i32, filters: Option<ChatFilters>) -> Result<Vec<Chat>, String> {
         log::info!("Getting chats, limit: {}", limit);

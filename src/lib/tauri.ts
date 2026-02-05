@@ -95,6 +95,10 @@ export async function getChats(limit: number, filters?: ChatFilters): Promise<Ch
   return invoke("get_chats", { limit, filters });
 }
 
+export async function getChat(chatId: number): Promise<Chat | null> {
+  return invoke("get_chat", { chatId });
+}
+
 export async function getChatMessages(
   chatId: number,
   limit: number,

@@ -20,7 +20,16 @@ interface ViewProps {
 }
 
 function ChatsView({ onOpenChat }: ViewProps) {
-  const { chats, selectedChatId, selectChat, isLoadingChats } = useChats();
+  const {
+    chats,
+    selectedChatId,
+    selectChat,
+    isLoadingChats,
+    isLoadingMoreChats,
+    hasMoreChats,
+    refresh,
+    loadMoreChats,
+  } = useChats();
 
   const handleSelectChat = (chatId: number) => {
     selectChat(chatId);
@@ -36,6 +45,10 @@ function ChatsView({ onOpenChat }: ViewProps) {
           selectedChatId={selectedChatId}
           onSelectChat={handleSelectChat}
           isLoading={isLoadingChats}
+          onRefresh={refresh}
+          onLoadMore={loadMoreChats}
+          hasMore={hasMoreChats}
+          isLoadingMore={isLoadingMoreChats}
         />
       </div>
     </div>
