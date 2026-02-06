@@ -186,18 +186,9 @@ pub fn run() {
             // Setup Telegram event forwarding to frontend
             setup_telegram_events(app, telegram_client.clone());
 
-            // Connect to Telegram in background
-            let client = telegram_client.clone();
-            tauri::async_runtime::spawn(async move {
-                match client.connect().await {
-                    Ok(authorized) => {
-                        log::info!("Telegram connected, authorized: {}", authorized);
-                    }
-                    Err(e) => {
-                        log::error!("Failed to connect to Telegram: {}", e);
-                    }
-                }
-            });
+            // Note: Telegram connection is initiated by the frontend via the `connect` IPC command.
+            // Do NOT spawn a background connect here — it races with the frontend's connect call,
+            // causing two simultaneous TCP connections that overwrite each other's client reference.
 
             Ok(())
         })
