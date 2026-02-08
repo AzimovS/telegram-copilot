@@ -47,7 +47,7 @@ pub fn run() {
     // Initialize logging first
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // Load .env file - try multiple locations
+    // Load .env file - try multiple locations (useful for development)
     let env_paths = [
         std::path::PathBuf::from(".env"),
         std::path::PathBuf::from("../.env"),  // When running from src-tauri
@@ -70,16 +70,25 @@ pub fn run() {
     }
 
     if !env_loaded {
-        log::warn!("No .env file found. Using environment variables directly.");
+        log::warn!("No .env file found. Using environment variables or compile-time defaults.");
     }
 
-    // Load config from environment
+    // Load config: runtime env vars take priority, then compile-time env vars from .env
     let api_id: i32 = std::env::var("TELEGRAM_API_ID")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or_else(|| {
+            option_env!("TELEGRAM_API_ID")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0)
+        });
 
-    let api_hash = std::env::var("TELEGRAM_API_HASH").unwrap_or_default();
+    let api_hash = std::env::var("TELEGRAM_API_HASH")
+        .unwrap_or_else(|_| {
+            option_env!("TELEGRAM_API_HASH")
+                .unwrap_or("")
+                .to_string()
+        });
 
     let use_test_dc = std::env::var("TELEGRAM_USE_TEST_DC")
         .map(|s| s == "1" || s.to_lowercase() == "true")

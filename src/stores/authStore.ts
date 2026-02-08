@@ -146,6 +146,9 @@ export const useAuthStore = create<AuthStore>((set) => ({
         authState: { type: "waitPhoneNumber" },
         currentUser: null,
       });
+
+      // Reconnect to create a fresh client for re-login
+      await tauri.connect();
     } catch (error) {
       set({ error: String(error) });
     } finally {
