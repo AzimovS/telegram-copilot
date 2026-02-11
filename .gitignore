@@ -45,6 +45,11 @@ venv/
 # Redis
 dump.rdb
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # Claude
 .claude/
 *.session
