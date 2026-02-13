@@ -3,7 +3,7 @@ import * as tauri from "@/lib/tauri";
 import { chatFiltersFromSettings } from "@/lib/tauri";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useSummaryStore } from "@/stores/summaryStore";
-import { useChatStore } from "@/stores/chatStore";
+import { useChatStore, DEFAULT_CHAT_LIMIT } from "@/stores/chatStore";
 import type { Folder } from "@/types/telegram";
 import {
   ChatSummary,
@@ -166,7 +166,7 @@ export function useSummaries(options: UseSummariesOptions) {
 
         // Use cached chats if available (2 min TTL for chat list)
         const shouldRefreshChats = chatStore.shouldRefreshChats(2, filtersHash);
-        const chats = await chatStore.loadChats(100, filters, regenerate || shouldRefreshChats) as Chat[];
+        const chats = await chatStore.loadChats(DEFAULT_CHAT_LIMIT, filters, regenerate || shouldRefreshChats) as Chat[];
 
         let filteredChats = chats;
         if (typeFilter !== "all") {
@@ -195,52 +195,51 @@ export function useSummaries(options: UseSummariesOptions) {
           return;
         }
 
-        const chatContexts = [];
         const largeGroupSummaries: ChatSummary[] = [];
 
-        for (let i = 0; i < paginatedChats.length; i++) {
-          const chat = paginatedChats[i];
-          try {
-            // Use cached messages if available (2 min TTL for messages)
-            const shouldRefreshMsgs = chatStore.shouldRefreshMessages(chat.id, 2);
-            const messages = await chatStore.loadMessages(chat.id, MESSAGES_PER_CHAT, undefined, regenerate || shouldRefreshMsgs);
-            const memberCount = chat.memberCount || 0;
-            const isLargeGroup =
-              chat.type === "group" && memberCount >= LARGE_GROUP_THRESHOLD;
-
-            if (isLargeGroup) {
-              const lastMsgDate = messages[0]?.date || Math.floor(Date.now() / 1000);
-              largeGroupSummaries.push(
-                createLargeGroupSummary(
-                  { id: chat.id, title: chat.title, type: chat.type, memberCount },
-                  messages.length,
-                  lastMsgDate
-                )
-              );
-            } else {
-              chatContexts.push({
-                chat_id: chat.id,
-                chat_title: chat.title,
-                chat_type: chat.type,
-                unread_count: chat.unreadCount,
-                messages: messages.map((m: any) => ({
-                  id: Number(m.id),
-                  sender_name: m.senderName,
-                  text: m.content.type === "text" ? m.content.text : "[Media]",
-                  date: m.date,
-                  is_outgoing: m.isOutgoing,
-                })),
-              });
-            }
-
-            // Small delay between requests only if fetching fresh
-            if ((regenerate || shouldRefreshMsgs) && i < paginatedChats.length - 1) {
-              await new Promise((r) => setTimeout(r, 50));
-            }
-          } catch (e) {
-            console.warn(`Failed to get messages for chat ${chat.id}:`, e);
+        // Separate large groups BEFORE message fetching (skip fetch for 500+ member groups)
+        const smallChats = paginatedChats.filter((chat) => {
+          const memberCount = chat.memberCount || 0;
+          const isLargeGroup = chat.type === "group" && memberCount >= LARGE_GROUP_THRESHOLD;
+          if (isLargeGroup) {
+            largeGroupSummaries.push(
+              createLargeGroupSummary(
+                { id: chat.id, title: chat.title, type: chat.type, memberCount },
+                0,
+                chat.lastMessage?.date || Math.floor(Date.now() / 1000)
+              )
+            );
+            return false;
           }
-        }
+          return true;
+        });
+
+        // Batch-fetch messages for non-large chats
+        const batchRequests = smallChats.map((chat) => ({
+          chatId: chat.id,
+          limit: MESSAGES_PER_CHAT,
+        }));
+        const messagesByChat = await chatStore.batchLoadMessages(batchRequests);
+
+        // Build chat contexts from batch results
+        const chatContexts = smallChats
+          .filter((chat) => (messagesByChat[chat.id]?.length ?? 0) > 0)
+          .map((chat) => {
+            const messages = messagesByChat[chat.id];
+            return {
+              chat_id: chat.id,
+              chat_title: chat.title,
+              chat_type: chat.type,
+              unread_count: chat.unreadCount,
+              messages: messages.map((m: any) => ({
+                id: Number(m.id),
+                sender_name: m.senderName,
+                text: m.content.type === "text" ? m.content.text : "[Media]",
+                date: m.date,
+                is_outgoing: m.isOutgoing,
+              })),
+            };
+          });
 
         if (chatContexts.length === 0 && largeGroupSummaries.length > 0) {
           let newSummaries = sortSummaries(largeGroupSummaries);

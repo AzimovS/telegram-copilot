@@ -1,4 +1,4 @@
-use crate::telegram::{TelegramClient, client::{Chat, Message, ChatFilters}};
+use crate::telegram::{TelegramClient, client::{Chat, Message, ChatFilters, BatchMessageRequest, BatchMessageResult}};
 use tauri::State;
 use std::sync::Arc;
 
@@ -36,6 +36,14 @@ pub async fn send_message(
     text: String,
 ) -> Result<Message, String> {
     client.send_message(chat_id, &text).await
+}
+
+#[tauri::command]
+pub async fn get_batch_messages(
+    client: State<'_, Arc<TelegramClient>>,
+    requests: Vec<BatchMessageRequest>,
+) -> Result<Vec<BatchMessageResult>, String> {
+    client.get_batch_messages(requests).await
 }
 
 #[tauri::command]
