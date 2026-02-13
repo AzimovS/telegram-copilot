@@ -7,7 +7,7 @@ import * as tauri from "@/lib/tauri";
 import { chatFiltersFromSettings } from "@/lib/tauri";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useBriefingStore } from "@/stores/briefingStore";
-import { useChatStore } from "@/stores/chatStore";
+import { useChatStore, DEFAULT_CHAT_LIMIT } from "@/stores/chatStore";
 import type { Folder } from "@/types/telegram";
 
 import type {
@@ -71,15 +71,13 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
     briefingStore.setError(null);
 
     try {
-      // Get chats with unread messages from Telegram (with filters + unread_only)
-      const baseFilters = chatFiltersFromSettings(chatFilters, folders);
-      const filters = { ...baseFilters, includeUnreadOnly: true };
+      // Get chats from shared cache, filter unread client-side
+      const filters = chatFiltersFromSettings(chatFilters, folders);
       const filtersHash = JSON.stringify(filters);
 
       // Use cached chats if available (2 min TTL for chat list)
       const shouldRefreshChats = chatStore.shouldRefreshChats(2, filtersHash);
-      const chats = await chatStore.loadChats(500, filters, force || shouldRefreshChats);
-      // Backend already filters for unread only, but double-check
+      const chats = await chatStore.loadChats(DEFAULT_CHAT_LIMIT, filters, force || shouldRefreshChats);
       const unreadChats = chats.filter((c) => c.unreadCount > 0);
 
       if (unreadChats.length === 0) {
@@ -115,18 +113,21 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
         summary: `${chat.unreadCount} new messages in large group`,
       }));
 
-      // Get recent messages for each unread chat (no limit on number of chats)
-      const chatContexts = [];
-      for (let i = 0; i < smallChats.length; i++) {
-        const chat = smallChats[i];
-        try {
-          // Use cached messages if available (2 min TTL for messages)
-          const shouldRefreshMsgs = chatStore.shouldRefreshMessages(chat.id, 2);
-          // Fetch unread_count messages, but cap at 30 (min 5 for fallback)
-          const messageCount = Math.min(Math.max(chat.unreadCount, 5), 30);
-          const messages = await chatStore.loadMessages(chat.id, messageCount, undefined, force || shouldRefreshMsgs);
+      // Build batch requests for message fetching
+      const batchRequests = smallChats.map((chat) => ({
+        chatId: chat.id,
+        limit: Math.min(Math.max(chat.unreadCount, 5), 30),
+      }));
 
-          chatContexts.push({
+      // Single batch call replaces N sequential calls
+      const messagesByChat = await chatStore.batchLoadMessages(batchRequests);
+
+      // Build chat contexts from results
+      const chatContexts = smallChats
+        .filter((chat) => (messagesByChat[chat.id]?.length ?? 0) > 0)
+        .map((chat) => {
+          const messages = messagesByChat[chat.id];
+          return {
             chat_id: chat.id,
             chat_title: chat.title,
             chat_type: chat.type,
@@ -142,15 +143,8 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
             has_unanswered_question: detectQuestion(messages),
             hours_since_last_activity: computeHoursSince(messages),
             is_private_chat: chat.type === "private",
-          });
-          // Small delay between requests to avoid rate limiting (only if fetching fresh)
-          if ((force || shouldRefreshMsgs) && i < smallChats.length - 1) {
-            await new Promise((r) => setTimeout(r, 50));
-          }
-        } catch (e) {
-          console.warn(`Failed to get messages for chat ${chat.id}:`, e);
-        }
-      }
+          };
+        });
 
       if (chatContexts.length === 0) {
         // Even if no small chats to process, we may have large group FYIs

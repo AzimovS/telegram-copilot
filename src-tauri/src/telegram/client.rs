@@ -135,6 +135,21 @@ pub struct Folder {
     pub include_bots: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchMessageRequest {
+    pub chat_id: i64,
+    pub limit: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchMessageResult {
+    pub chat_id: i64,
+    pub messages: Vec<Message>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommonChat {
     pub id: i64,
@@ -687,6 +702,7 @@ impl TelegramClient {
         let mut dialogs = client.iter_dialogs();
         let mut chats = Vec::new();
         let mut count = 0;
+        let mut consecutive_read = 0;
         let mut cache = self.chat_cache.write().await;
 
         while let Some(dialog) = dialogs.next().await.map_err(|e| format!("Failed to get dialogs: {}", e))? {
@@ -957,10 +973,18 @@ impl TelegramClient {
                 // Groups/channels without member_count pass through (shown)
             }
 
-            // Check unread_only filter
+            // Check unread_only filter with early termination
             if filters.include_unread_only && unread_count == 0 {
+                consecutive_read += 1;
+                if consecutive_read >= 50 && count > 0 {
+                    log::info!("Early termination: {} consecutive read chats after {} unread", consecutive_read, count);
+                    cache.insert(chat.id(), dialog.chat.clone());
+                    break;
+                }
                 cache.insert(chat.id(), dialog.chat.clone());
                 continue;
+            } else if filters.include_unread_only {
+                consecutive_read = 0;
             }
 
             // Note: Folder filter is now applied at the top as early exit (OR logic)
@@ -992,6 +1016,12 @@ impl TelegramClient {
 
         *self.cache_loaded.write().await = true;
         log::info!("Chat cache updated with {} chats", cache.len());
+
+        // Sort: pinned chats first, then by order
+        chats.sort_by(|a, b| {
+            b.is_pinned.cmp(&a.is_pinned)
+                .then(a.order.cmp(&b.order))
+        });
 
         Ok(chats)
     }
@@ -1072,6 +1102,48 @@ impl TelegramClient {
         // Messages come newest first, reverse for chronological order
         messages.reverse();
         Ok(messages)
+    }
+
+    /// Get messages for multiple chats in one call (with rate limiting and FLOOD_WAIT detection)
+    pub async fn get_batch_messages(&self, requests: Vec<BatchMessageRequest>) -> Result<Vec<BatchMessageResult>, String> {
+        log::info!("Batch fetching messages for {} chats", requests.len());
+        self.ensure_cache_loaded(200).await?;
+
+        let mut results = Vec::new();
+
+        for req in &requests {
+            match self.get_chat_messages_inner(req.chat_id, req.limit, None).await {
+                Ok(msgs) => {
+                    results.push(BatchMessageResult {
+                        chat_id: req.chat_id,
+                        messages: msgs,
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    // Detect FLOOD_WAIT — stop and return partial results
+                    if e.contains("FLOOD") || e.contains("flood") {
+                        log::warn!("FLOOD_WAIT detected at chat {}, returning partial results ({}/{})", req.chat_id, results.len(), requests.len());
+                        results.push(BatchMessageResult {
+                            chat_id: req.chat_id,
+                            messages: vec![],
+                            error: Some(e),
+                        });
+                        break;
+                    }
+                    results.push(BatchMessageResult {
+                        chat_id: req.chat_id,
+                        messages: vec![],
+                        error: Some(e),
+                    });
+                }
+            }
+            // 50ms delay between requests to stay within rate limits
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        log::info!("Batch fetch complete: {}/{} chats processed", results.len(), requests.len());
+        Ok(results)
     }
 
     /// Send a text message (with auto-reconnect on connection failure)

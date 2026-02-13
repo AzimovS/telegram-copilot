@@ -111,6 +111,23 @@ export async function sendMessage(chatId: number, text: string): Promise<Message
   return invoke("send_message", { chatId, text });
 }
 
+export interface BatchMessageRequest {
+  chatId: number;
+  limit: number;
+}
+
+export interface BatchMessageResult {
+  chatId: number;
+  messages: Message[];
+  error: string | null;
+}
+
+export async function getBatchMessages(
+  requests: BatchMessageRequest[]
+): Promise<BatchMessageResult[]> {
+  return invoke("get_batch_messages", { requests });
+}
+
 export async function invalidateChatCache(): Promise<void> {
   return invoke("invalidate_chat_cache");
 }

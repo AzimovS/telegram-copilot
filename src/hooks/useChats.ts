@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState, useRef } from "react";
-import { useChatStore } from "@/stores/chatStore";
+import { useChatStore, DEFAULT_CHAT_LIMIT } from "@/stores/chatStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { chatFiltersFromSettings, getFolders } from "@/lib/tauri";
 import type { Folder } from "@/types/telegram";
@@ -80,14 +80,14 @@ export function useChats() {
     // If filters changed, load immediately without debounce
     if (filtersChanged || chats.length === 0) {
       lastFiltersHash.current = currentFiltersHash;
-      loadChats(50, filters);
+      loadChats(DEFAULT_CHAT_LIMIT, filters);
       return;
     }
 
     // Debounce background refresh
     const timeoutId = setTimeout(() => {
       lastFiltersHash.current = currentFiltersHash;
-      loadChats(50, filters);
+      loadChats(DEFAULT_CHAT_LIMIT, filters);
     }, DEBOUNCE_MS);
 
     return () => {
@@ -124,7 +124,7 @@ export function useChats() {
   // Refresh with current filters (force refresh)
   const refresh = useCallback(() => {
     const filters = chatFiltersFromSettings(chatFilters, folders);
-    loadChats(50, filters, true);
+    loadChats(DEFAULT_CHAT_LIMIT, filters, true);
   }, [loadChats, chatFilters, folders]);
 
   // Load more chats (pagination)

@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useChatStore } from "@/stores/chatStore";
+import { chatFiltersFromSettings, getFolders } from "@/lib/tauri";
+import type { Folder } from "@/types/telegram";
 import { useTelegramEvents } from "@/hooks/useTelegram";
 import { useChats } from "@/hooks/useChats";
 import { LoginForm } from "@/components/auth/LoginForm";
@@ -115,7 +118,7 @@ function LoadingScreen() {
 
 function App() {
   const { authState, isConnecting, connect } = useAuthStore();
-  const { onboardingCompleted } = useSettingsStore();
+  const { onboardingCompleted, chatFilters } = useSettingsStore();
   const [currentView, setCurrentView] = useState<ViewType>("briefing");
   const [activeChatId, setActiveChatId] = useState<number | null>(null);
   const [activeChatName, setActiveChatName] = useState<string | undefined>(undefined);
@@ -127,6 +130,21 @@ function App() {
   useEffect(() => {
     connect();
   }, [connect]);
+
+  // Background prefetch: warm cache after auth, without blocking UI
+  useEffect(() => {
+    if (authState.type === "ready") {
+      const initPrefetch = async () => {
+        let fldrs: Folder[] = [];
+        if (chatFilters.selectedFolderIds.length > 0) {
+          try { fldrs = await getFolders(); } catch { /* ignore */ }
+        }
+        const filters = chatFiltersFromSettings(chatFilters, fldrs);
+        useChatStore.getState().backgroundPrefetch(filters);
+      };
+      initPrefetch();
+    }
+  }, [authState.type]);
 
   // Sync showOnboarding state with store
   useEffect(() => {

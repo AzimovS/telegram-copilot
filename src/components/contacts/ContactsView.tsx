@@ -14,6 +14,7 @@ import { ContactsToolbar } from "./ContactsToolbar";
 import { ContactRow } from "./ContactRow";
 import { ContactDetailPanel } from "./ContactDetailPanel";
 import { BulkActionsBar } from "./BulkActionsBar";
+import { VirtualList } from "@/components/common/VirtualList";
 
 interface ContactsViewProps {
   onOpenChat: (chatId: number) => void;
@@ -165,10 +166,13 @@ export function ContactsView({ onOpenChat }: ContactsViewProps) {
             </div>
           )}
 
-          {/* Contact Rows */}
+          {/* Contact Rows (Virtualized) */}
           {!isLoading && (
-            <div className="flex-1 overflow-y-auto">
-              {contacts.map((contact) => (
+            <VirtualList
+              items={contacts}
+              estimateSize={52}
+              className="flex-1"
+              renderItem={(contact) => (
                 <ContactRow
                   key={contact.userId}
                   contact={contact}
@@ -177,8 +181,8 @@ export function ContactsView({ onOpenChat }: ContactsViewProps) {
                   onRowClick={handleRowClick}
                   onCheckboxClick={handleCheckboxClick}
                 />
-              ))}
-            </div>
+              )}
+            />
           )}
         </div>
 
