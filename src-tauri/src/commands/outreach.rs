@@ -320,7 +320,7 @@ pub async fn queue_outreach_messages(
                 "[Outreach] Sending to {} ({}): {}",
                 recipient.first_name,
                 recipient.user_id,
-                &message[..message.len().min(50)]
+                &message[..message.floor_char_boundary(50)]
             );
 
             // Send the message - user_id is the chat_id for DMs

@@ -7,36 +7,11 @@ import * as tauri from "@/lib/tauri";
 import { chatFiltersFromSettings } from "@/lib/tauri";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useBriefingStore } from "@/stores/briefingStore";
-import { useChatStore, DEFAULT_CHAT_LIMIT } from "@/stores/chatStore";
+import { useChatStore } from "@/stores/chatStore";
 import type { Folder } from "@/types/telegram";
-
-import type {
-  FYIItemData,
-  BriefingV2Response,
-} from "@/lib/tauri";
 
 interface BriefingViewProps {
   onOpenChat: (chatId: number, chatName: string, chatType?: string) => void;
-}
-
-type BriefingData = BriefingV2Response;
-
-// Large groups (500+ members) are auto-classified as FYI to save API calls
-const LARGE_GROUP_THRESHOLD = 500;
-
-// Helper function to detect if there's an unanswered question
-function detectQuestion(msgs: { isOutgoing: boolean; content: { type: string; text?: string } }[]): boolean {
-  if (msgs.length === 0) return false;
-  const lastNonOutgoing = [...msgs].reverse().find(m => !m.isOutgoing);
-  return lastNonOutgoing?.content.type === "text" &&
-         (lastNonOutgoing.content.text?.trim().endsWith("?") ?? false);
-}
-
-// Helper function to compute hours since last activity
-function computeHoursSince(msgs: { date: number }[]): number {
-  if (msgs.length === 0) return 999;
-  const lastDate = msgs[msgs.length - 1].date;
-  return (Date.now() / 1000 - lastDate) / 3600;
 }
 
 export function BriefingView({ onOpenChat }: BriefingViewProps) {
@@ -44,11 +19,14 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
   const chatFilters = useSettingsStore((state) => state.chatFilters);
   const cacheTTL = useSettingsStore((state) => state.cacheTTL);
 
-  // Use stores for persistent state
-  const briefingStore = useBriefingStore();
-  const chatStore = useChatStore();
+  // Individual selectors: stable references, no unnecessary re-renders
+  const data = useBriefingStore((s) => s.data);
+  const loading = useBriefingStore((s) => s.isLoading);
+  const error = useBriefingStore((s) => s.error);
 
-  const { data, isLoading: loading, error } = briefingStore;
+  // Actions are referentially stable (created once in zustand create())
+  const loadBriefing = useBriefingStore((s) => s.loadBriefing);
+  const removeItem = useBriefingStore((s) => s.removeItem);
 
   // Load folders when selectedFolderIds changes
   useEffect(() => {
@@ -61,149 +39,23 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
     }
   }, [chatFilters.selectedFolderIds]);
 
-  const load = useCallback(async (force: boolean) => {
-    // Check if we should skip loading (use cached data)
-    if (!force && data && !briefingStore.shouldRefresh(cacheTTL.briefingTTLMinutes)) {
-      return;
-    }
-
-    briefingStore.setLoading(true);
-    briefingStore.setError(null);
-
-    try {
-      // Get chats from shared cache, filter unread client-side
-      const filters = chatFiltersFromSettings(chatFilters, folders);
-      const filtersHash = JSON.stringify(filters);
-
-      // Use cached chats if available (2 min TTL for chat list)
-      const shouldRefreshChats = chatStore.shouldRefreshChats(2, filtersHash);
-      const chats = await chatStore.loadChats(DEFAULT_CHAT_LIMIT, filters, force || shouldRefreshChats);
-      const unreadChats = chats.filter((c) => c.unreadCount > 0);
-
-      if (unreadChats.length === 0) {
-        briefingStore.setData({
-          needs_response: [],
-          fyi_summaries: [],
-          stats: { needs_response_count: 0, fyi_count: 0, total_unread: 0 },
-          generated_at: new Date().toISOString(),
-          cached: false,
-        });
-        briefingStore.setLoading(false);
-        return;
-      }
-
-      // Separate large groups from chats to process (large groups are auto-classified as FYI)
-      const largeGroups = unreadChats.filter(
-        (c) =>
-          (c.type === "group" || c.type === "channel") &&
-          (c.memberCount ?? 0) >= LARGE_GROUP_THRESHOLD
-      );
-      const smallChats = unreadChats.filter((c) => !largeGroups.includes(c));
-
-      // Auto-generate FYI items for large groups (no AI needed)
-      const largeGroupFYIs: FYIItemData[] = largeGroups.map((chat, idx) => ({
-        id: Date.now() + idx,
-        chat_id: chat.id,
-        chat_name: chat.title,
-        chat_type: chat.type === "private" ? "dm" : chat.type === "channel" ? "channel" : "group",
-        unread_count: chat.unreadCount,
-        last_message: chat.lastMessage?.content.type === "text" ? chat.lastMessage.content.text : null,
-        last_message_date: chat.lastMessage ? new Date(chat.lastMessage.date * 1000).toISOString() : null,
-        priority: "fyi" as const,
-        summary: `${chat.unreadCount} new messages in large group`,
-      }));
-
-      // Build batch requests for message fetching
-      const batchRequests = smallChats.map((chat) => ({
-        chatId: chat.id,
-        limit: Math.min(Math.max(chat.unreadCount, 5), 30),
-      }));
-
-      // Single batch call replaces N sequential calls
-      const messagesByChat = await chatStore.batchLoadMessages(batchRequests);
-
-      // Build chat contexts from results
-      const chatContexts = smallChats
-        .filter((chat) => (messagesByChat[chat.id]?.length ?? 0) > 0)
-        .map((chat) => {
-          const messages = messagesByChat[chat.id];
-          return {
-            chat_id: chat.id,
-            chat_title: chat.title,
-            chat_type: chat.type,
-            messages: messages.map((m) => ({
-              id: Number(m.id),
-              sender_name: m.senderName,
-              text: m.content.type === "text" ? m.content.text : "[Media]",
-              date: m.date,
-              is_outgoing: m.isOutgoing,
-            })),
-            unread_count: chat.unreadCount,
-            last_message_is_outgoing: messages.length > 0 && messages[messages.length - 1].isOutgoing,
-            has_unanswered_question: detectQuestion(messages),
-            hours_since_last_activity: computeHoursSince(messages),
-            is_private_chat: chat.type === "private",
-          };
-        });
-
-      if (chatContexts.length === 0) {
-        // Even if no small chats to process, we may have large group FYIs
-        const totalUnread = largeGroupFYIs.reduce((sum, item) => sum + item.unread_count, 0);
-        briefingStore.setData({
-          needs_response: [],
-          fyi_summaries: largeGroupFYIs,
-          stats: { needs_response_count: 0, fyi_count: largeGroupFYIs.length, total_unread: totalUnread },
-          generated_at: new Date().toISOString(),
-          cached: false,
-        });
-        briefingStore.setLoading(false);
-        return;
-      }
-
-      // Call Tauri AI command
-      const result: BriefingData = await tauri.generateBriefingV2(
-        chatContexts,
-        force,
-        cacheTTL.briefingTTLMinutes
-      );
-
-      // Merge large group FYIs with AI-generated FYIs
-      const mergedFYIs = [...result.fyi_summaries, ...largeGroupFYIs];
-      const largeGroupUnreadTotal = largeGroupFYIs.reduce((sum, item) => sum + item.unread_count, 0);
-
-      briefingStore.setData({
-        ...result,
-        fyi_summaries: mergedFYIs,
-        stats: {
-          ...result.stats,
-          fyi_count: mergedFYIs.length,
-          total_unread: result.stats.total_unread + largeGroupUnreadTotal,
-        },
-      });
-    } catch (err) {
-      console.error("Failed to load briefing:", err);
-      const errorMessage = err instanceof Error ? err.message : "Failed to load briefing";
-      briefingStore.setError(errorMessage);
-    } finally {
-      briefingStore.setLoading(false);
-    }
-  }, [chatFilters, folders, cacheTTL, data, briefingStore, chatStore]);
-
-  // Initial load - only if needed
+  // Load briefing when filters/folders/TTL change (dedup handled inside loadBriefing)
   useEffect(() => {
-    if (briefingStore.shouldRefresh(cacheTTL.briefingTTLMinutes)) {
-      load(false);
-    }
-  }, [cacheTTL.briefingTTLMinutes]);
+    const filters = chatFiltersFromSettings(chatFilters, folders);
+    loadBriefing({
+      filters,
+      briefingTTLMinutes: cacheTTL.briefingTTLMinutes,
+    });
+  }, [chatFilters, folders, cacheTTL.briefingTTLMinutes, loadBriefing]);
 
-  // Reload when filters change
-  useEffect(() => {
-    load(false);
-  }, [chatFilters, folders]);
-
-  const removeItem = useCallback((chatId: number) => {
-    briefingStore.removeItem(chatId);
-  }, [briefingStore]);
+  const handleRefresh = useCallback(() => {
+    const filters = chatFiltersFromSettings(chatFilters, folders);
+    loadBriefing({
+      filters,
+      force: true,
+      briefingTTLMinutes: cacheTTL.briefingTTLMinutes,
+    });
+  }, [chatFilters, folders, cacheTTL.briefingTTLMinutes, loadBriefing]);
 
   const handleSend = useCallback(async (chatId: number, message: string) => {
     await tauri.sendMessage(chatId, message);
@@ -211,9 +63,10 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
 
   const handleGetDraft = useCallback(async (chatId: number): Promise<string> => {
     try {
-      const messages = await chatStore.loadMessages(chatId, 20);
+      const store = useChatStore.getState();
+      const messages = await store.loadMessages(chatId, 20);
       const filters = chatFiltersFromSettings(chatFilters, folders);
-      const chats = await chatStore.loadChats(100, filters);
+      const chats = await store.loadChats(100, filters);
       const chat = chats.find((c) => c.id === chatId);
 
       const result = await tauri.generateDraft(
@@ -231,7 +84,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
       console.error("Failed to generate draft:", err);
     }
     return "";
-  }, [chatFilters, folders, chatStore]);
+  }, [chatFilters, folders]);
 
   // Calculate greeting based on time
   const getGreeting = () => {
@@ -262,7 +115,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
         <p className="text-4xl mb-4">Warning</p>
         <p className="text-xl font-medium mb-2">Failed to load briefing</p>
         <p className="text-muted-foreground mb-4 text-center max-w-md">{error}</p>
-        <Button variant="outline" onClick={() => load(true)}>
+        <Button variant="outline" onClick={handleRefresh}>
           <RefreshCw className="h-4 w-4 mr-2" />
           Retry
         </Button>
@@ -284,7 +137,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => load(true)}
+            onClick={handleRefresh}
             disabled={loading}
           >
             {loading ? (
@@ -301,7 +154,7 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
       {error && data && (
         <div className="bg-red-100/50 dark:bg-red-950/30 border border-red-200/50 dark:border-red-800/50 rounded-lg p-3 flex items-center justify-between">
           <span className="text-sm text-red-700 dark:text-red-400">Failed to refresh: {error}</span>
-          <Button variant="ghost" size="sm" onClick={() => load(true)} disabled={loading}>
+          <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loading}>
             Retry
           </Button>
         </div>

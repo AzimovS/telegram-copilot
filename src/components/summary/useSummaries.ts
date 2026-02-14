@@ -137,8 +137,8 @@ export function useSummaries(options: UseSummariesOptions) {
 
   const loadSummaries = useCallback(
     async (regenerate = false, append = false) => {
-      // Prevent concurrent loads
-      if (isLoadingRef.current && !append) {
+      // Prevent concurrent loads (also check store in case background prefetch is running)
+      if ((isLoadingRef.current || useSummaryStore.getState().isLoading) && !append) {
         return;
       }
 
