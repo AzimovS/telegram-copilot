@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useChatStore } from "@/stores/chatStore";
+import { useChatStore, DEFAULT_CHAT_LIMIT } from "@/stores/chatStore";
+import { useContactStore } from "@/stores/contactStore";
+import { useSummaryStore } from "@/stores/summaryStore";
+import { useBriefingStore } from "@/stores/briefingStore";
 import { chatFiltersFromSettings, getFolders } from "@/lib/tauri";
 import type { Folder } from "@/types/telegram";
 import { useTelegramEvents } from "@/hooks/useTelegram";
@@ -118,7 +121,7 @@ function LoadingScreen() {
 
 function App() {
   const { authState, isConnecting, connect } = useAuthStore();
-  const { onboardingCompleted, chatFilters } = useSettingsStore();
+  const onboardingCompleted = useSettingsStore((s) => s.onboardingCompleted);
   const [currentView, setCurrentView] = useState<ViewType>("briefing");
   const [activeChatId, setActiveChatId] = useState<number | null>(null);
   const [activeChatName, setActiveChatName] = useState<string | undefined>(undefined);
@@ -131,18 +134,41 @@ function App() {
     connect();
   }, [connect]);
 
-  // Background prefetch: warm cache after auth, without blocking UI
+  // Sequential startup pipeline: chats → briefing → summaries
+  // Reads settings via getState() to avoid stale closures and unnecessary re-renders.
   useEffect(() => {
     if (authState.type === "ready") {
-      const initPrefetch = async () => {
+      const startup = async () => {
+        const { chatFilters, cacheTTL } = useSettingsStore.getState();
+
         let fldrs: Folder[] = [];
         if (chatFilters.selectedFolderIds.length > 0) {
           try { fldrs = await getFolders(); } catch { /* ignore */ }
         }
         const filters = chatFiltersFromSettings(chatFilters, fldrs);
-        useChatStore.getState().backgroundPrefetch(filters);
+
+        // Contacts (independent, fire-and-forget)
+        useContactStore.getState().loadContacts().catch((e) =>
+          console.warn("Background contacts prefetch failed (non-fatal):", e)
+        );
+
+        // Step 1: Load 100 chats (single GetDialogs)
+        await useChatStore.getState().loadChats(DEFAULT_CHAT_LIMIT, filters);
+
+        // Step 2: Briefing (fetches messages for unread chats + AI)
+        // Note: loadBriefing catches errors internally and writes to store.error,
+        // so this .catch() only guards against unexpected thrown exceptions.
+        await useBriefingStore.getState().loadBriefing({
+          filters,
+          briefingTTLMinutes: cacheTTL.briefingTTLMinutes,
+        }).catch((e) => console.warn("Briefing prefetch failed (non-fatal):", e));
+
+        // Step 3: Summary AI for first 10 chats (reuses cached messages from briefing)
+        useSummaryStore.getState().backgroundPrefetchSummaries().catch((e) =>
+          console.warn("Background summary prefetch failed (non-fatal):", e)
+        );
       };
-      initPrefetch();
+      startup().catch((e) => console.error("Startup pipeline failed:", e));
     }
   }, [authState.type]);
 

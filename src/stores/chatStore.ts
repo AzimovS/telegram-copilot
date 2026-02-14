@@ -29,8 +29,6 @@ interface ChatStore {
   updateChat: (chat: Chat) => void;
   clearError: () => void;
   reset: () => void;
-  backgroundPrefetch: (filters?: ChatFilters) => Promise<void>;
-
   // Helpers
   shouldRefreshChats: (ttlMinutes: number, currentFiltersHash: string) => boolean;
   shouldRefreshMessages: (chatId: number, ttlMinutes: number) => boolean;
@@ -45,6 +43,9 @@ function hashFilters(filters?: ChatFilters): string {
 
 const CHAT_PAGE_SIZE = 50;
 export const DEFAULT_CHAT_LIMIT = 100;
+
+// In-flight dedup for loadChats — coalesces concurrent calls with the same params
+let inFlightChatsRequest: { promise: Promise<Chat[]>; filtersHash: string; limit: number } | null = null;
 
 export const useChatStore = create<ChatStore>((set, get) => ({
   chats: [],
@@ -69,6 +70,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return chats;
     }
 
+    // Reuse in-flight request if compatible (prevents concurrent duplicate API calls).
+    // Once past the cache check, any in-flight API call is "fresh" regardless of
+    // forceRefresh — safe for all callers to share.
+    if (inFlightChatsRequest &&
+        inFlightChatsRequest.filtersHash === filtersHash &&
+        inFlightChatsRequest.limit >= limit) {
+      return inFlightChatsRequest.promise;
+    }
+
     // Only show loading spinner if we have no cached chats to display
     // This prevents flashing on background refreshes
     const showLoading = chats.length === 0;
@@ -78,25 +88,31 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set({ error: null });
     }
 
-    try {
-      const fetchLimit = Math.max(limit, currentChatLimit);
-      const newChats = (await tauri.getChats(fetchLimit, filters)) as Chat[];
-      set({
-        chats: newChats,
-        lastChatsLoadedAt: Date.now(),
-        lastFiltersHash: filtersHash,
-        currentChatLimit: fetchLimit,
-        hasMoreChats: newChats.length >= fetchLimit, // If we got fewer than requested, no more chats
-      });
-      return newChats;
-    } catch (error) {
-      set({ error: String(error) });
-      return get().chats; // Return existing chats on error
-    } finally {
-      if (showLoading) {
-        set({ isLoadingChats: false });
+    const fetchLimit = Math.max(limit, currentChatLimit);
+    const promise = (async () => {
+      try {
+        const newChats = (await tauri.getChats(fetchLimit, filters)) as Chat[];
+        set({
+          chats: newChats,
+          lastChatsLoadedAt: Date.now(),
+          lastFiltersHash: filtersHash,
+          currentChatLimit: fetchLimit,
+          hasMoreChats: newChats.length >= fetchLimit,
+        });
+        return newChats;
+      } catch (error) {
+        set({ error: String(error) });
+        return get().chats;
+      } finally {
+        inFlightChatsRequest = null;
+        if (showLoading) {
+          set({ isLoadingChats: false });
+        }
       }
-    }
+    })();
+
+    inFlightChatsRequest = { promise, filtersHash, limit: fetchLimit };
+    return promise;
   },
 
   loadMoreChats: async (filters?: ChatFilters) => {
@@ -296,17 +312,4 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return get().messages[chatId] || null;
   },
 
-  backgroundPrefetch: async (filters?: ChatFilters) => {
-    try {
-      const chats = await get().loadChats(DEFAULT_CHAT_LIMIT, filters);
-      const uncached = chats.filter((c) => !get().messages[c.id]);
-      if (uncached.length > 0) {
-        const requests = uncached.map((c) => ({ chatId: c.id, limit: 30 }));
-        const results = await tauri.getBatchMessages(requests);
-        get().setCachedMessages(results);
-      }
-    } catch (e) {
-      console.warn("Background prefetch failed (non-fatal):", e);
-    }
-  },
 }));

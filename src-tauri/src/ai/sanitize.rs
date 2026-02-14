@@ -24,7 +24,7 @@ pub fn sanitize_user_content(text: &str) -> String {
 
     // Truncate if too long
     if escaped.len() > MAX_CONTENT_LENGTH {
-        format!("{}...[truncated]", &escaped[..MAX_CONTENT_LENGTH])
+        format!("{}...[truncated]", &escaped[..escaped.floor_char_boundary(MAX_CONTENT_LENGTH)])
     } else {
         escaped.to_string()
     }

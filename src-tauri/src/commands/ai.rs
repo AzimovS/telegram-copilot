@@ -202,7 +202,7 @@ async fn process_chat_for_briefing(
     let last_message = chat.messages.last().map(|m| {
         let text = sanitize_message_text(&m.text);
         if text.len() > 300 {
-            format!("{}...", &text[..300])
+            format!("{}...", &text[..text.floor_char_boundary(300)])
         } else {
             text
         }
