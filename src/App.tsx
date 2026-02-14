@@ -19,6 +19,7 @@ import { BriefingView } from "@/components/briefing/BriefingView";
 import { SummaryView } from "@/components/summary/SummaryView";
 import { OffboardView } from "@/components/offboard/OffboardView";
 import { OnboardingFlow } from "@/components/onboarding/OnboardingFlow";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/styles/globals.css";
 
 interface ViewProps {
@@ -224,16 +225,18 @@ function App() {
   };
 
   return (
-    <MainLayout
-      currentView={currentView}
-      onViewChange={setCurrentView}
-      activeChatId={activeChatId}
-      activeChatName={activeChatName}
-      activeChatType={activeChatType}
-      onCloseChat={handleCloseChat}
-    >
-      {renderView()}
-    </MainLayout>
+    <TooltipProvider>
+      <MainLayout
+        currentView={currentView}
+        onViewChange={setCurrentView}
+        activeChatId={activeChatId}
+        activeChatName={activeChatName}
+        activeChatType={activeChatType}
+        onCloseChat={handleCloseChat}
+      >
+        {renderView()}
+      </MainLayout>
+    </TooltipProvider>
   );
 }
 
