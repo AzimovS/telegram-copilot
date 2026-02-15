@@ -49,6 +49,12 @@ impl<V: Clone> TTLCache<V> {
         );
     }
 
+    /// Invalidate a single entry by key
+    pub async fn invalidate(&self, key: &str) {
+        let mut entries = self.entries.write().await;
+        entries.remove(key);
+    }
+
     /// Invalidate all entries in the cache
     #[allow(dead_code)]
     pub async fn invalidate_all(&self) {
