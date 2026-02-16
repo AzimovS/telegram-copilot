@@ -273,7 +273,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
-  reset: () =>
+  reset: () => {
+    inFlightChatsRequest = null;
     set({
       chats: [],
       selectedChatId: null,
@@ -287,7 +288,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       lastFiltersHash: null,
       currentChatLimit: 0,
       hasMoreChats: true,
-    }),
+    });
+  },
 
   shouldRefreshChats: (ttlMinutes, currentFiltersHash) => {
     const { chats, lastChatsLoadedAt, lastFiltersHash } = get();
