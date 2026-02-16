@@ -111,6 +111,23 @@ export async function sendMessage(chatId: number, text: string): Promise<Message
   return invoke("send_message", { chatId, text });
 }
 
+export interface BatchMessageRequest {
+  chatId: number;
+  limit: number;
+}
+
+export interface BatchMessageResult {
+  chatId: number;
+  messages: Message[];
+  error: string | null;
+}
+
+export async function getBatchMessages(
+  requests: BatchMessageRequest[]
+): Promise<BatchMessageResult[]> {
+  return invoke("get_batch_messages", { requests });
+}
+
 export async function invalidateChatCache(): Promise<void> {
   return invoke("invalidate_chat_cache");
 }
@@ -326,4 +343,39 @@ export async function generateDraft(
   messages: DraftMessage[]
 ): Promise<DraftResponse> {
   return invoke("generate_draft", { chatId, chatTitle, messages });
+}
+
+// LLM Config types and commands
+
+export interface LLMConfig {
+  provider: "openai" | "ollama";
+  base_url: string;
+  api_key: string | null;
+  model: string;
+}
+
+export interface OllamaModel {
+  name: string;
+  size: number | null;
+  modified_at: string | null;
+}
+
+export async function getLLMConfig(): Promise<LLMConfig> {
+  return invoke("get_llm_config");
+}
+
+export async function updateLLMConfig(config: LLMConfig): Promise<void> {
+  return invoke("update_llm_config", { config });
+}
+
+export async function listOllamaModels(baseUrl?: string): Promise<OllamaModel[]> {
+  return invoke("list_ollama_models_cmd", { baseUrl });
+}
+
+export async function testLLMConnection(config: LLMConfig): Promise<string> {
+  return invoke("test_llm_connection", { config });
+}
+
+export async function isLLMConfigured(): Promise<boolean> {
+  return invoke("is_llm_configured");
 }

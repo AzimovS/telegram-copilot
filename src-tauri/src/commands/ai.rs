@@ -1,5 +1,5 @@
 use crate::ai::{
-    client::{safe_json_parse, OpenAIClient},
+    client::{safe_json_parse, list_ollama_models, LLMClient, LLMConfig, OllamaModel},
     prompts::{
         format_briefing_v2_user_prompt, format_draft_user_prompt, format_summary_user_prompt,
         BRIEFING_V2_SYSTEM_PROMPT, DETAILED_SUMMARY_PROMPT, DRAFT_SYSTEM_PROMPT,
@@ -19,7 +19,7 @@ use tauri::State;
 /// Generate briefing V2 with priority classification
 #[tauri::command]
 pub async fn generate_briefing_v2(
-    client: State<'_, Arc<OpenAIClient>>,
+    client: State<'_, Arc<LLMClient>>,
     cache: State<'_, Arc<BriefingCache>>,
     chats: Vec<ChatContext>,
     force_refresh: bool,
@@ -72,6 +72,7 @@ pub async fn generate_briefing_v2(
         let client = client.clone();
         let chat = chat.clone();
         let handle = tokio::spawn(async move {
+            let _permit = client.acquire_permit().await;
             process_chat_for_briefing(&client, chat, idx as i32 + 1).await
         });
         handles.push(handle);
@@ -176,7 +177,7 @@ impl BriefingResult {
 
 /// Process a single chat for briefing
 async fn process_chat_for_briefing(
-    client: &OpenAIClient,
+    client: &LLMClient,
     chat: ChatContext,
     id: i32,
 ) -> Result<BriefingResult, String> {
@@ -202,7 +203,7 @@ async fn process_chat_for_briefing(
     let last_message = chat.messages.last().map(|m| {
         let text = sanitize_message_text(&m.text);
         if text.len() > 300 {
-            format!("{}...", &text[..300])
+            format!("{}...", &text[..text.floor_char_boundary(300)])
         } else {
             text
         }
@@ -226,8 +227,8 @@ async fn process_chat_for_briefing(
         &messages,
     );
 
-    // Call OpenAI
-    let openai_messages = vec![
+    // Call LLM
+    let llm_messages = vec![
         OpenAIMessage {
             role: "system".to_string(),
             content: BRIEFING_V2_SYSTEM_PROMPT.to_string(),
@@ -238,7 +239,7 @@ async fn process_chat_for_briefing(
         },
     ];
 
-    match client.chat_completion(openai_messages, 0.3, 500, true).await {
+    match client.chat_completion(llm_messages, 0.3, 500, true).await {
         Ok(response) => {
             match safe_json_parse::<AIBriefingResponse>(&response, "briefing") {
                 Ok(parsed) => Ok(BriefingResult {
@@ -271,7 +272,7 @@ async fn process_chat_for_briefing(
             }
         }
         Err(e) => {
-            log::error!("OpenAI call failed for chat {}: {}", chat.chat_id, e);
+            log::error!("LLM call failed for chat {}: {}", chat.chat_id, e);
             // Return FYI on error
             Ok(BriefingResult {
                 id,
@@ -292,7 +293,7 @@ async fn process_chat_for_briefing(
 /// Generate batch summaries for multiple chats
 #[tauri::command]
 pub async fn generate_batch_summaries(
-    client: State<'_, Arc<OpenAIClient>>,
+    client: State<'_, Arc<LLMClient>>,
     cache: State<'_, Arc<SummaryCache>>,
     chats: Vec<ChatSummaryContext>,
     regenerate: bool,
@@ -337,7 +338,10 @@ pub async fn generate_batch_summaries(
     for chat in chats.iter() {
         let client = client.clone();
         let chat = chat.clone();
-        let handle = tokio::spawn(async move { process_chat_for_summary(&client, chat).await });
+        let handle = tokio::spawn(async move {
+            let _permit = client.acquire_permit().await;
+            process_chat_for_summary(&client, chat).await
+        });
         handles.push(handle);
     }
 
@@ -368,7 +372,7 @@ pub async fn generate_batch_summaries(
 
 /// Process a single chat for summary
 async fn process_chat_for_summary(
-    client: &OpenAIClient,
+    client: &LLMClient,
     chat: ChatSummaryContext,
 ) -> ChatSummaryResult {
     let chat_title = sanitize_chat_title(&chat.chat_title);
@@ -399,8 +403,8 @@ async fn process_chat_for_summary(
     // Build user prompt
     let user_prompt = format_summary_user_prompt(&chat_title, &chat_type, &messages);
 
-    // Call OpenAI
-    let openai_messages = vec![
+    // Call LLM
+    let llm_messages = vec![
         OpenAIMessage {
             role: "system".to_string(),
             content: DETAILED_SUMMARY_PROMPT.to_string(),
@@ -411,7 +415,7 @@ async fn process_chat_for_summary(
         },
     ];
 
-    match client.chat_completion(openai_messages, 0.3, 600, true).await {
+    match client.chat_completion(llm_messages, 0.3, 600, true).await {
         Ok(response) => match safe_json_parse::<AISummaryResponse>(&response, "summary") {
             Ok(parsed) => ChatSummaryResult {
                 chat_id: chat.chat_id,
@@ -428,7 +432,7 @@ async fn process_chat_for_summary(
             Err(_) => create_fallback_summary(chat, chat_type, message_count, last_message_date),
         },
         Err(e) => {
-            log::error!("OpenAI call failed for chat {}: {}", chat.chat_id, e);
+            log::error!("LLM call failed for chat {}: {}", chat.chat_id, e);
             create_fallback_summary(chat, chat_type, message_count, last_message_date)
         }
     }
@@ -458,7 +462,7 @@ fn create_fallback_summary(
 /// Generate a draft reply for a chat
 #[tauri::command]
 pub async fn generate_draft(
-    client: State<'_, Arc<OpenAIClient>>,
+    client: State<'_, Arc<LLMClient>>,
     chat_id: i64,
     chat_title: String,
     messages: Vec<DraftMessage>,
@@ -493,8 +497,8 @@ pub async fn generate_draft(
     // Build user prompt
     let user_prompt = format_draft_user_prompt(&sanitized_title, &formatted_messages);
 
-    // Call OpenAI
-    let openai_messages = vec![
+    // Call LLM
+    let llm_messages = vec![
         OpenAIMessage {
             role: "system".to_string(),
             content: DRAFT_SYSTEM_PROMPT.to_string(),
@@ -507,7 +511,7 @@ pub async fn generate_draft(
 
     match client
         .inner()
-        .chat_completion(openai_messages, 0.7, 300, false)
+        .chat_completion(llm_messages, 0.7, 300, false)
         .await
     {
         Ok(draft) => Ok(DraftResponse {
@@ -518,5 +522,105 @@ pub async fn generate_draft(
             log::error!("Failed to generate draft: {}", e);
             Err(format!("Failed to generate draft: {}", e))
         }
+    }
+}
+
+// ============================================================================
+// LLM Config Commands
+// ============================================================================
+
+/// Get current LLM configuration
+#[tauri::command]
+pub async fn get_llm_config(
+    client: State<'_, Arc<LLMClient>>,
+) -> Result<LLMConfig, String> {
+    let mut config = client.get_config().await;
+    // Mask the API key for security - only send a flag indicating if it's set
+    if let Some(ref key) = config.api_key {
+        if !key.is_empty() {
+            config.api_key = Some("••••••••".to_string());
+        }
+    }
+    Ok(config)
+}
+
+/// Update LLM configuration, persist to SQLite, and invalidate caches
+#[tauri::command]
+pub async fn update_llm_config(
+    client: State<'_, Arc<LLMClient>>,
+    briefing_cache: State<'_, Arc<BriefingCache>>,
+    summary_cache: State<'_, Arc<SummaryCache>>,
+    config: LLMConfig,
+) -> Result<(), String> {
+    log::info!(
+        "Updating LLM config: provider={:?}, model={}, base_url={}",
+        config.provider,
+        config.model,
+        config.base_url
+    );
+
+    // If the API key is masked, preserve the existing one
+    let mut final_config = config.clone();
+    if final_config.api_key.as_deref() == Some("••••••••") {
+        let current = client.get_config().await;
+        final_config.api_key = current.api_key;
+    }
+
+    // Save to SQLite
+    crate::db::settings::save_llm_config(&final_config)?;
+
+    // Update runtime config
+    client.update_config(final_config).await;
+
+    // Invalidate caches so next AI request uses the new provider/model
+    briefing_cache.0.invalidate_all().await;
+    summary_cache.0.invalidate_all().await;
+
+    log::info!("LLM config updated and caches invalidated");
+    Ok(())
+}
+
+/// List available Ollama models
+#[tauri::command]
+pub async fn list_ollama_models_cmd(
+    base_url: Option<String>,
+) -> Result<Vec<OllamaModel>, String> {
+    let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
+    list_ollama_models(&url).await
+}
+
+/// Check if the LLM client is configured (has API key for OpenAI, always true for Ollama)
+#[tauri::command]
+pub async fn is_llm_configured(
+    client: State<'_, Arc<LLMClient>>,
+) -> Result<bool, String> {
+    Ok(client.is_configured().await)
+}
+
+/// Test LLM connection with the given config
+#[tauri::command]
+pub async fn test_llm_connection(
+    client: State<'_, Arc<LLMClient>>,
+    config: LLMConfig,
+) -> Result<String, String> {
+    use crate::ai::types::OpenAIMessage;
+
+    // If the API key is the masked sentinel, substitute the real key from shared state
+    let mut final_config = config;
+    if final_config.api_key.as_deref() == Some("••••••••") {
+        let current = client.get_config().await;
+        final_config.api_key = current.api_key;
+    }
+
+    let test_client = LLMClient::new(final_config);
+
+    let messages = vec![OpenAIMessage {
+        role: "user".to_string(),
+        content: "Say ok".to_string(),
+    }];
+
+    match test_client.chat_completion(messages, 0.0, 10, false).await {
+        Ok(response) => Ok(format!("Connection successful: {}", response.trim())),
+        Err(e) => Err(format!("Connection failed: {}", e)),
     }
 }

@@ -28,6 +28,9 @@ interface AuthStore {
   clearError: () => void;
 }
 
+// Prevents StrictMode from doubling the connect call
+let connectPromise: Promise<void> | null = null;
+
 export const useAuthStore = create<AuthStore>((set) => ({
   authState: { type: "waitPhoneNumber" },
   currentUser: null,
@@ -39,21 +42,26 @@ export const useAuthStore = create<AuthStore>((set) => ({
   setCurrentUser: (currentUser) => set({ currentUser }),
 
   connect: async () => {
+    if (connectPromise) return connectPromise;
     set({ isConnecting: true, error: null });
-    try {
-      const isAuthorized = await tauri.connect();
-      if (isAuthorized) {
-        const user = await tauri.getCurrentUser();
-        set({ currentUser: user, authState: { type: "ready" } });
-      } else {
-        set({ authState: { type: "waitPhoneNumber" } });
+    connectPromise = (async () => {
+      try {
+        const isAuthorized = await tauri.connect();
+        if (isAuthorized) {
+          const user = await tauri.getCurrentUser();
+          set({ currentUser: user, authState: { type: "ready" } });
+        } else {
+          set({ authState: { type: "waitPhoneNumber" } });
+        }
+      } catch (error) {
+        console.error("Failed to connect:", error);
+        set({ error: String(error) });
+      } finally {
+        set({ isConnecting: false });
+        connectPromise = null;
       }
-    } catch (error) {
-      console.error("Failed to connect:", error);
-      set({ error: String(error) });
-    } finally {
-      set({ isConnecting: false });
-    }
+    })();
+    return connectPromise;
   },
 
   sendPhoneNumber: async (phoneNumber) => {

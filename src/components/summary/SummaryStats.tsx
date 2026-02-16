@@ -1,4 +1,9 @@
-import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, HelpCircle } from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { ChatSummary } from "./types";
 
 interface SummaryStatsProps {
@@ -43,7 +48,19 @@ export function SummaryStats({ summaries }: SummaryStatsProps) {
             {negativeCount}
           </span>
         </div>
-        <p className="text-xs text-muted-foreground mt-1">Sentiment</p>
+        <div className="flex items-center gap-1 mt-1">
+          <p className="text-xs text-muted-foreground">Sentiment</p>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p className="max-w-[200px]">
+                AI-assessed mood of conversations: positive (things are going well), neutral, or negative (issues, complaints, or tension detected).
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
     </div>
   );

@@ -6,7 +6,7 @@ pub mod error;
 mod telegram;
 mod utils;
 
-use ai::OpenAIClient;
+use ai::{LLMClient, LLMConfig, LLMProvider};
 use cache::{BriefingCache, ContactsCache, SummaryCache};
 use commands::{ai as ai_commands, auth, chats, contacts, offboard, outreach, scopes};
 use utils::rate_limiter::RateLimiter;
@@ -120,18 +120,24 @@ pub fn run() {
     let user_hash_cache = Arc::new(offboard::UserAccessHashCache::new());
     let chat_data_cache = Arc::new(offboard::ChatDataCache::new());
 
-    // Initialize OpenAI client
-    // Try env var first, then compile-time embedded key
+    // Initialize LLM client with default OpenAI config (backward compatible with env var)
     let openai_api_key = std::env::var("OPENAI_API_KEY")
         .unwrap_or_else(|_| option_env!("OPENAI_API_KEY").unwrap_or("").to_string());
 
     if openai_api_key.is_empty() {
-        log::warn!("OPENAI_API_KEY not set. AI features will not work.");
+        log::warn!("OPENAI_API_KEY not set. AI features will not work unless Ollama is configured.");
     } else {
         log::info!("OpenAI API key configured: {}...", &openai_api_key[..8.min(openai_api_key.len())]);
     }
 
-    let openai_client = Arc::new(OpenAIClient::new(openai_api_key));
+    let default_llm_config = LLMConfig {
+        provider: LLMProvider::OpenAI,
+        base_url: "https://api.openai.com".to_string(),
+        api_key: if openai_api_key.is_empty() { None } else { Some(openai_api_key) },
+        model: "gpt-4o-mini".to_string(),
+    };
+
+    let llm_client = Arc::new(LLMClient::new(default_llm_config));
 
     // Initialize caches for AI responses and contacts
     let briefing_cache = Arc::new(BriefingCache::new());
@@ -145,7 +151,7 @@ pub fn run() {
         .manage(rate_limiter)
         .manage(user_hash_cache)
         .manage(chat_data_cache)
-        .manage(openai_client)
+        .manage(llm_client.clone())
         .manage(briefing_cache)
         .manage(summary_cache)
         .manage(contacts_cache)
@@ -179,6 +185,25 @@ pub fn run() {
             log::info!("Telegram Copilot started");
             log::info!("API ID configured: {}", api_id != 0);
             log::info!("Test DC: {}", use_test_dc);
+
+            // Restore saved LLM config from SQLite (overrides env defaults)
+            // Use block_on to ensure config is applied before the event loop starts
+            // accepting IPC calls. This is safe because setup() runs before the event loop.
+            match db::settings::load_llm_config() {
+                Ok(Some(saved_config)) => {
+                    log::info!("Restored LLM config: provider={:?}, model={}", saved_config.provider, saved_config.model);
+                    let client = llm_client.clone();
+                    tauri::async_runtime::block_on(async move {
+                        client.update_config(saved_config).await;
+                    });
+                }
+                Ok(None) => {
+                    log::info!("No saved LLM config found, using defaults");
+                }
+                Err(e) => {
+                    log::warn!("Failed to load saved LLM config: {}", e);
+                }
+            }
 
             // Set session file path in app data directory
             let session_path = app_dir.join("telegram.session");
@@ -214,6 +239,7 @@ pub fn run() {
             chats::get_chats,
             chats::get_chat,
             chats::get_chat_messages,
+            chats::get_batch_messages,
             chats::send_message,
             chats::invalidate_chat_cache,
             // Contact commands
@@ -239,6 +265,11 @@ pub fn run() {
             ai_commands::generate_briefing_v2,
             ai_commands::generate_batch_summaries,
             ai_commands::generate_draft,
+            ai_commands::get_llm_config,
+            ai_commands::update_llm_config,
+            ai_commands::list_ollama_models_cmd,
+            ai_commands::test_llm_connection,
+            ai_commands::is_llm_configured,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

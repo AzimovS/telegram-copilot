@@ -132,26 +132,41 @@ pub async fn get_contacts(
 
 #[tauri::command]
 pub async fn add_contact_tag(
+    cache: State<'_, Arc<ContactsCache>>,
     user_id: i64,
     tag: String,
 ) -> Result<(), String> {
-    db_contacts::add_contact_tag(user_id, &tag)
+    let result = db_contacts::add_contact_tag(user_id, &tag);
+    if result.is_ok() {
+        cache.0.invalidate(CONTACTS_CACHE_KEY).await;
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn remove_contact_tag(
+    cache: State<'_, Arc<ContactsCache>>,
     user_id: i64,
     tag: String,
 ) -> Result<(), String> {
-    db_contacts::remove_contact_tag(user_id, &tag)
+    let result = db_contacts::remove_contact_tag(user_id, &tag);
+    if result.is_ok() {
+        cache.0.invalidate(CONTACTS_CACHE_KEY).await;
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn update_contact_notes(
+    cache: State<'_, Arc<ContactsCache>>,
     user_id: i64,
     notes: String,
 ) -> Result<(), String> {
-    db_contacts::update_contact_notes(user_id, &notes)
+    let result = db_contacts::update_contact_notes(user_id, &notes);
+    if result.is_ok() {
+        cache.0.invalidate(CONTACTS_CACHE_KEY).await;
+    }
+    result
 }
 
 #[tauri::command]

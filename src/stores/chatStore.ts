@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Chat, Message } from "@/types/telegram";
 import * as tauri from "@/lib/tauri";
-import { type ChatFilters } from "@/lib/tauri";
+import { type ChatFilters, type BatchMessageResult } from "@/lib/tauri";
 
 interface ChatStore {
   chats: Chat[];
@@ -22,12 +22,13 @@ interface ChatStore {
   loadMoreChats: (filters?: ChatFilters) => Promise<Chat[]>;
   selectChat: (chatId: number | null) => void;
   loadMessages: (chatId: number, limit?: number, fromMessageId?: number, forceRefresh?: boolean) => Promise<Message[]>;
+  batchLoadMessages: (chatIds: { chatId: number; limit: number }[]) => Promise<Record<number, Message[]>>;
+  setCachedMessages: (results: BatchMessageResult[]) => void;
   sendMessage: (chatId: number, text: string) => Promise<void>;
   addMessage: (message: Message) => void;
   updateChat: (chat: Chat) => void;
   clearError: () => void;
   reset: () => void;
-
   // Helpers
   shouldRefreshChats: (ttlMinutes: number, currentFiltersHash: string) => boolean;
   shouldRefreshMessages: (chatId: number, ttlMinutes: number) => boolean;
@@ -41,6 +42,10 @@ function hashFilters(filters?: ChatFilters): string {
 }
 
 const CHAT_PAGE_SIZE = 50;
+export const DEFAULT_CHAT_LIMIT = 100;
+
+// In-flight dedup for loadChats — coalesces concurrent calls with the same params
+let inFlightChatsRequest: { promise: Promise<Chat[]>; filtersHash: string; limit: number } | null = null;
 
 export const useChatStore = create<ChatStore>((set, get) => ({
   chats: [],
@@ -53,16 +58,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   error: null,
   lastChatsLoadedAt: null,
   lastFiltersHash: null,
-  currentChatLimit: CHAT_PAGE_SIZE,
+  currentChatLimit: 0,
   hasMoreChats: true,
 
-  loadChats: async (limit = CHAT_PAGE_SIZE, filters?: ChatFilters, forceRefresh = false) => {
+  loadChats: async (limit = DEFAULT_CHAT_LIMIT, filters?: ChatFilters, forceRefresh = false) => {
     const filtersHash = hashFilters(filters);
-    const { chats, lastFiltersHash } = get();
+    const { chats, lastFiltersHash, currentChatLimit } = get();
 
-    // Return cached chats if available and not forcing refresh
-    if (!forceRefresh && chats.length > 0 && lastFiltersHash === filtersHash) {
+    // Return cached chats if available, same filters, and we have enough chats
+    if (!forceRefresh && chats.length > 0 && lastFiltersHash === filtersHash && currentChatLimit >= limit) {
       return chats;
+    }
+
+    // Reuse in-flight request if compatible (prevents concurrent duplicate API calls).
+    // Once past the cache check, any in-flight API call is "fresh" regardless of
+    // forceRefresh — safe for all callers to share.
+    if (inFlightChatsRequest &&
+        inFlightChatsRequest.filtersHash === filtersHash &&
+        inFlightChatsRequest.limit >= limit) {
+      return inFlightChatsRequest.promise;
     }
 
     // Only show loading spinner if we have no cached chats to display
@@ -74,24 +88,31 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set({ error: null });
     }
 
-    try {
-      const newChats = (await tauri.getChats(limit, filters)) as Chat[];
-      set({
-        chats: newChats,
-        lastChatsLoadedAt: Date.now(),
-        lastFiltersHash: filtersHash,
-        currentChatLimit: limit,
-        hasMoreChats: newChats.length >= limit, // If we got fewer than requested, no more chats
-      });
-      return newChats;
-    } catch (error) {
-      set({ error: String(error) });
-      return get().chats; // Return existing chats on error
-    } finally {
-      if (showLoading) {
-        set({ isLoadingChats: false });
+    const fetchLimit = Math.max(limit, currentChatLimit);
+    const promise = (async () => {
+      try {
+        const newChats = (await tauri.getChats(fetchLimit, filters)) as Chat[];
+        set({
+          chats: newChats,
+          lastChatsLoadedAt: Date.now(),
+          lastFiltersHash: filtersHash,
+          currentChatLimit: fetchLimit,
+          hasMoreChats: newChats.length >= fetchLimit,
+        });
+        return newChats;
+      } catch (error) {
+        set({ error: String(error) });
+        return get().chats;
+      } finally {
+        inFlightChatsRequest = null;
+        if (showLoading) {
+          set({ isLoadingChats: false });
+        }
       }
-    }
+    })();
+
+    inFlightChatsRequest = { promise, filtersHash, limit: fetchLimit };
+    return promise;
   },
 
   loadMoreChats: async (filters?: ChatFilters) => {
@@ -180,6 +201,50 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
+  setCachedMessages: (results: BatchMessageResult[]) => {
+    set((state) => {
+      const newMessages = { ...state.messages };
+      const newLoadedAt = { ...state.messagesLoadedAt };
+      const now = Date.now();
+      for (const result of results) {
+        if (!result.error && result.messages.length > 0) {
+          // Only update if we don't already have newer data
+          const existingLoadedAt = state.messagesLoadedAt[result.chatId] || 0;
+          if (now > existingLoadedAt) {
+            newMessages[result.chatId] = result.messages;
+            newLoadedAt[result.chatId] = now;
+          }
+        }
+      }
+      return { messages: newMessages, messagesLoadedAt: newLoadedAt };
+    });
+  },
+
+  batchLoadMessages: async (chatIds) => {
+    const state = get();
+    // Filter out chats that already have fresh cached messages (2 min TTL)
+    const uncached = chatIds.filter(({ chatId }) => state.shouldRefreshMessages(chatId, 2));
+    const result: Record<number, Message[]> = {};
+
+    // Use cached data for fresh entries
+    for (const { chatId } of chatIds) {
+      if (!state.shouldRefreshMessages(chatId, 2)) {
+        result[chatId] = state.messages[chatId] || [];
+      }
+    }
+
+    // Batch-fetch uncached entries
+    if (uncached.length > 0) {
+      const batchResults = await tauri.getBatchMessages(uncached);
+      get().setCachedMessages(batchResults);
+      for (const r of batchResults) {
+        result[r.chatId] = r.error ? [] : r.messages;
+      }
+    }
+
+    return result;
+  },
+
   sendMessage: async (chatId, text) => {
     try {
       await tauri.sendMessage(chatId, text);
@@ -208,7 +273,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
-  reset: () =>
+  reset: () => {
+    inFlightChatsRequest = null;
     set({
       chats: [],
       selectedChatId: null,
@@ -220,9 +286,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       error: null,
       lastChatsLoadedAt: null,
       lastFiltersHash: null,
-      currentChatLimit: CHAT_PAGE_SIZE,
+      currentChatLimit: 0,
       hasMoreChats: true,
-    }),
+    });
+  },
 
   shouldRefreshChats: (ttlMinutes, currentFiltersHash) => {
     const { chats, lastChatsLoadedAt, lastFiltersHash } = get();
@@ -246,4 +313,5 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   getCachedMessages: (chatId) => {
     return get().messages[chatId] || null;
   },
+
 }));

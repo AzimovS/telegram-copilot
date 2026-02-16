@@ -35,7 +35,7 @@ describe("chatStore", () => {
 
       await useChatStore.getState().loadChats();
 
-      expect(mockInvoke).toHaveBeenCalledWith("get_chats", { limit: 50 });
+      expect(mockInvoke).toHaveBeenCalledWith("get_chats", { limit: 100 });
       expect(useChatStore.getState().chats).toEqual(mockChats);
       expect(useChatStore.getState().isLoadingChats).toBe(false);
     });
@@ -57,6 +57,50 @@ describe("chatStore", () => {
 
       expect(useChatStore.getState().error).toBe("Error: Failed to load");
       expect(useChatStore.getState().isLoadingChats).toBe(false);
+    });
+
+    it("returns cache hit when currentChatLimit >= requested limit", async () => {
+      const mockChats = [
+        { id: 1, title: "Chat 1" },
+        { id: 2, title: "Chat 2" },
+      ];
+      mockInvoke.mockResolvedValueOnce(mockChats);
+
+      // First load with limit 100
+      await useChatStore.getState().loadChats(100);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+      // Second load with limit 50 — should use cache (100 >= 50)
+      const result = await useChatStore.getState().loadChats(50);
+      expect(mockInvoke).toHaveBeenCalledTimes(1); // No additional call
+      expect(result).toEqual(mockChats);
+    });
+
+    it("re-fetches when requested limit > currentChatLimit", async () => {
+      const mockChats = [
+        { id: 1, title: "Chat 1" },
+        { id: 2, title: "Chat 2" },
+      ];
+      mockInvoke.mockResolvedValueOnce(mockChats);
+
+      // First load with limit 50
+      await useChatStore.getState().loadChats(50);
+      expect(mockInvoke).toHaveBeenCalledTimes(1);
+      expect(useChatStore.getState().currentChatLimit).toBe(50);
+
+      // Second load with limit 150 — should re-fetch (50 < 150)
+      const moreChats = [
+        { id: 1, title: "Chat 1" },
+        { id: 2, title: "Chat 2" },
+        { id: 3, title: "Chat 3" },
+      ];
+      mockInvoke.mockResolvedValueOnce(moreChats);
+
+      const result = await useChatStore.getState().loadChats(150);
+      expect(mockInvoke).toHaveBeenCalledTimes(2);
+      expect(mockInvoke).toHaveBeenLastCalledWith("get_chats", { limit: 150 });
+      expect(result).toEqual(moreChats);
+      expect(useChatStore.getState().currentChatLimit).toBe(150);
     });
 
     it("sets loading state during request", async () => {

@@ -35,9 +35,13 @@ npm run tauri build
 ## Testing
 
 ```bash
-# Frontend tests (Vitest + React Testing Library)
+# Unit tests (Vitest + React Testing Library)
 npm test              # Watch mode
 npm test -- --run     # Run once and exit
+
+# E2E tests (Playwright — runs against Vite dev server with mocked Tauri IPC)
+npm run test:e2e      # Run all E2E tests
+npm run test:e2e:ui   # Debug with Playwright UI
 
 # Rust tests
 cd src-tauri && cargo test
@@ -46,7 +50,7 @@ cd src-tauri && cargo test
 npx tsc --noEmit
 
 # Run all checks before committing
-npm test -- --run && cd src-tauri && cargo check && cd .. && npx tsc --noEmit
+npm test -- --run && npm run test:e2e && cd src-tauri && cargo check && cd .. && npx tsc --noEmit
 ```
 
 ## Architecture

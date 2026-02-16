@@ -27,7 +27,7 @@ interface OffboardViewProps {
 }
 
 export function OffboardView({ onOpenChat: _onOpenChat }: OffboardViewProps) {
-  const { contacts, isLoading: isLoadingContacts } = useContacts();
+  const { allContacts: contacts, isLoading: isLoadingContacts } = useContacts();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [groups, setGroups] = useState<CommonGroup[]>([]);

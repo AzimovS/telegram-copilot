@@ -2,6 +2,7 @@ pub mod schema;
 pub mod contacts;
 pub mod outreach;
 pub mod scopes;
+pub mod settings;
 
 use rusqlite::Connection;
 use std::path::PathBuf;
