@@ -65,6 +65,16 @@ const DEFAULT_HANDLERS: IpcHandlers = {
   },
   generate_batch_summaries: { summaries: [], cached: false },
   generate_draft: { draft: "AI draft", chat_id: 0 },
+  get_llm_config: {
+    provider: "openai",
+    base_url: "https://api.openai.com",
+    api_key: null,
+    model: "gpt-4o-mini",
+  },
+  update_llm_config: null,
+  list_ollama_models_cmd: [],
+  test_llm_connection: "Connection successful: ok",
+  is_llm_configured: false,
 };
 
 // ── Init script injected via page.addInitScript ────────────────────

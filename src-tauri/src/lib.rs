@@ -6,7 +6,7 @@ pub mod error;
 mod telegram;
 mod utils;
 
-use ai::{LLMClient, LLMConfig};
+use ai::{LLMClient, LLMConfig, LLMProvider};
 use cache::{BriefingCache, ContactsCache, SummaryCache};
 use commands::{ai as ai_commands, auth, chats, contacts, offboard, outreach, scopes};
 use utils::rate_limiter::RateLimiter;
@@ -131,7 +131,7 @@ pub fn run() {
     }
 
     let default_llm_config = LLMConfig {
-        provider: "openai".to_string(),
+        provider: LLMProvider::OpenAI,
         base_url: "https://api.openai.com".to_string(),
         api_key: if openai_api_key.is_empty() { None } else { Some(openai_api_key) },
         model: "gpt-4o-mini".to_string(),
@@ -187,11 +187,13 @@ pub fn run() {
             log::info!("Test DC: {}", use_test_dc);
 
             // Restore saved LLM config from SQLite (overrides env defaults)
+            // Use block_on to ensure config is applied before the event loop starts
+            // accepting IPC calls. This is safe because setup() runs before the event loop.
             match db::settings::load_llm_config() {
                 Ok(Some(saved_config)) => {
-                    log::info!("Restored LLM config: provider={}, model={}", saved_config.provider, saved_config.model);
+                    log::info!("Restored LLM config: provider={:?}, model={}", saved_config.provider, saved_config.model);
                     let client = llm_client.clone();
-                    tauri::async_runtime::spawn(async move {
+                    tauri::async_runtime::block_on(async move {
                         client.update_config(saved_config).await;
                     });
                 }
@@ -267,6 +269,7 @@ pub fn run() {
             ai_commands::update_llm_config,
             ai_commands::list_ollama_models_cmd,
             ai_commands::test_llm_connection,
+            ai_commands::is_llm_configured,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

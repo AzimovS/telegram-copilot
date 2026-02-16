@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -15,12 +8,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import {
   getLLMConfig,
-  updateLLMConfig,
   listOllamaModels,
   testLLMConnection,
+  isLLMConfigured,
   type LLMConfig,
   type OllamaModel,
 } from "@/lib/tauri";
@@ -39,12 +31,11 @@ const DEFAULT_URLS: Record<string, string> = {
   ollama: "http://localhost:11434",
 };
 
-interface AIProviderDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+interface AIProviderStepProps {
+  onConfigChange: (config: LLMConfig) => void;
 }
 
-export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) {
+export function AIProviderStep({ onConfigChange }: AIProviderStepProps) {
   const [provider, setProvider] = useState<"openai" | "ollama">("openai");
   const [baseUrl, setBaseUrl] = useState(DEFAULT_URLS.openai);
   const [apiKey, setApiKey] = useState("");
@@ -54,26 +45,37 @@ export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) 
   const [loadingModels, setLoadingModels] = useState(false);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testMessage, setTestMessage] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [envKeyDetected, setEnvKeyDetected] = useState(false);
 
-  // Load current config when dialog opens
+  // Load current config on mount to detect .env key
   useEffect(() => {
-    if (open) {
-      setTestStatus("idle");
-      setTestMessage("");
-      getLLMConfig().then((config) => {
-        setProvider(config.provider);
-        setBaseUrl(config.base_url);
-        setApiKey(config.api_key || "");
-        setModel(config.model);
-        if (config.provider === "ollama") {
-          fetchOllamaModels(config.base_url);
-        }
-      }).catch((e) => {
-        console.error("Failed to load LLM config:", e);
-      });
-    }
-  }, [open]);
+    getLLMConfig().then((config) => {
+      setProvider(config.provider);
+      setBaseUrl(config.base_url);
+      setModel(config.model);
+      if (config.provider === "ollama") {
+        fetchOllamaModels(config.base_url);
+      }
+      // If api_key is masked, an env key was loaded
+      if (config.api_key && config.api_key !== "") {
+        setEnvKeyDetected(true);
+        setApiKey(config.api_key);
+      }
+    }).catch((e) => {
+      console.error("Failed to load LLM config:", e);
+    });
+
+    isLLMConfigured().then((configured) => {
+      if (configured) {
+        setEnvKeyDetected(true);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Notify parent of config changes
+  useEffect(() => {
+    onConfigChange(buildConfig());
+  }, [provider, baseUrl, apiKey, model]);
 
   const fetchOllamaModels = async (url?: string) => {
     setLoadingModels(true);
@@ -126,38 +128,20 @@ export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) 
     }
   };
 
-  const handleApply = async () => {
-    setSaving(true);
-    try {
-      await updateLLMConfig(buildConfig());
-      onOpenChange(false);
-    } catch (e) {
-      console.error("Failed to save LLM config:", e);
-      setTestStatus("error");
-      setTestMessage(`Failed to save: ${e}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCancel = () => {
-    onOpenChange(false);
-  };
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>AI Provider</DialogTitle>
-          <DialogDescription>
-            Configure which AI provider and model to use for briefings, summaries, and drafts.
-          </DialogDescription>
-        </DialogHeader>
+    <div className="space-y-6">
+      <div className="text-center space-y-2">
+        <h2 className="text-2xl font-bold">Set up AI Provider</h2>
+        <p className="text-muted-foreground">
+          Configure AI for briefings, summaries, and draft replies. You can skip this and set it up later in Settings.
+        </p>
+      </div>
 
-        <div className="space-y-4 py-4">
-          {/* Provider */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Provider</label>
+      <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+        {/* Provider */}
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Provider</h4>
+          <div className="p-3 rounded-lg border border-border bg-background">
             <Select value={provider} onValueChange={handleProviderChange}>
               <SelectTrigger>
                 <SelectValue />
@@ -168,55 +152,66 @@ export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) 
               </SelectContent>
             </Select>
           </div>
+        </div>
 
-          {/* Base URL */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Base URL</label>
+        {/* Base URL */}
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Base URL</h4>
+          <div className="p-3 rounded-lg border border-border bg-background">
             <Input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={DEFAULT_URLS[provider]}
             />
             {provider === "ollama" && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground mt-2">
                 Change if Ollama runs on a different host/port
               </p>
             )}
           </div>
+        </div>
 
-          {/* API Key (OpenAI only) */}
-          {provider === "openai" && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">API Key</label>
+        {/* API Key (OpenAI only) */}
+        {provider === "openai" && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">API Key</h4>
+            <div className="p-3 rounded-lg border border-border bg-background space-y-2">
               <Input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="sk-..."
               />
+              {envKeyDetected && (
+                <p className="text-xs text-green-600 dark:text-green-400">
+                  Key detected from environment
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
-                Stored locally in SQLite, never sent to any server except OpenAI
+                Stored locally, never sent anywhere except the provider
               </p>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Model */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">Model</label>
-              {provider === "ollama" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => fetchOllamaModels()}
-                  disabled={loadingModels}
-                  className="h-7 px-2"
-                >
-                  <RefreshCw className={`h-3 w-3 mr-1 ${loadingModels ? "animate-spin" : ""}`} />
-                  Refresh
-                </Button>
-              )}
-            </div>
+        {/* Model */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Model</h4>
+            {provider === "ollama" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => fetchOllamaModels()}
+                disabled={loadingModels}
+                className="h-7 px-2"
+              >
+                <RefreshCw className={`h-3 w-3 mr-1 ${loadingModels ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            )}
+          </div>
+          <div className="p-3 rounded-lg border border-border bg-background">
             {provider === "openai" ? (
               <Select value={model} onValueChange={setModel}>
                 <SelectTrigger>
@@ -257,42 +252,33 @@ export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) 
               </>
             )}
           </div>
-
-          {/* Test Connection */}
-          <div className="space-y-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleTest}
-              disabled={testStatus === "testing" || !model}
-              className="w-full"
-            >
-              {testStatus === "testing" ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : testStatus === "success" ? (
-                <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
-              ) : testStatus === "error" ? (
-                <XCircle className="h-4 w-4 mr-2 text-destructive" />
-              ) : null}
-              Test Connection
-            </Button>
-            {testMessage && (
-              <p className={`text-xs ${testStatus === "success" ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
-                {testMessage}
-              </p>
-            )}
-          </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" onClick={handleCancel}>
-            Cancel
+        {/* Test Connection */}
+        <div className="space-y-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleTest}
+            disabled={testStatus === "testing" || !model}
+            className="w-full"
+          >
+            {testStatus === "testing" ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : testStatus === "success" ? (
+              <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
+            ) : testStatus === "error" ? (
+              <XCircle className="h-4 w-4 mr-2 text-destructive" />
+            ) : null}
+            Test Connection
           </Button>
-          <Button onClick={handleApply} disabled={saving || !model}>
-            {saving ? "Saving..." : "Apply"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          {testMessage && (
+            <p className={`text-xs ${testStatus === "success" ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
+              {testMessage}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

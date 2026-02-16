@@ -3,4 +3,4 @@ pub mod prompts;
 pub mod sanitize;
 pub mod types;
 
-pub use client::{LLMClient, LLMConfig};
+pub use client::{LLMClient, LLMConfig, LLMProvider};

@@ -72,6 +72,7 @@ pub async fn generate_briefing_v2(
         let client = client.clone();
         let chat = chat.clone();
         let handle = tokio::spawn(async move {
+            let _permit = client.acquire_permit().await;
             process_chat_for_briefing(&client, chat, idx as i32 + 1).await
         });
         handles.push(handle);
@@ -337,7 +338,10 @@ pub async fn generate_batch_summaries(
     for chat in chats.iter() {
         let client = client.clone();
         let chat = chat.clone();
-        let handle = tokio::spawn(async move { process_chat_for_summary(&client, chat).await });
+        let handle = tokio::spawn(async move {
+            let _permit = client.acquire_permit().await;
+            process_chat_for_summary(&client, chat).await
+        });
         handles.push(handle);
     }
 
@@ -549,7 +553,7 @@ pub async fn update_llm_config(
     config: LLMConfig,
 ) -> Result<(), String> {
     log::info!(
-        "Updating LLM config: provider={}, model={}, base_url={}",
+        "Updating LLM config: provider={:?}, model={}, base_url={}",
         config.provider,
         config.model,
         config.base_url
@@ -585,12 +589,30 @@ pub async fn list_ollama_models_cmd(
     list_ollama_models(&url).await
 }
 
+/// Check if the LLM client is configured (has API key for OpenAI, always true for Ollama)
+#[tauri::command]
+pub async fn is_llm_configured(
+    client: State<'_, Arc<LLMClient>>,
+) -> Result<bool, String> {
+    Ok(client.is_configured().await)
+}
+
 /// Test LLM connection with the given config
 #[tauri::command]
-pub async fn test_llm_connection(config: LLMConfig) -> Result<String, String> {
+pub async fn test_llm_connection(
+    client: State<'_, Arc<LLMClient>>,
+    config: LLMConfig,
+) -> Result<String, String> {
     use crate::ai::types::OpenAIMessage;
 
-    let test_client = LLMClient::new(config);
+    // If the API key is the masked sentinel, substitute the real key from shared state
+    let mut final_config = config;
+    if final_config.api_key.as_deref() == Some("••••••••") {
+        let current = client.get_config().await;
+        final_config.api_key = current.api_key;
+    }
+
+    let test_client = LLMClient::new(final_config);
 
     let messages = vec![OpenAIMessage {
         role: "user".to_string(),

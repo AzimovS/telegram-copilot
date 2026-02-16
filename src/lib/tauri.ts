@@ -348,7 +348,7 @@ export async function generateDraft(
 // LLM Config types and commands
 
 export interface LLMConfig {
-  provider: string;
+  provider: "openai" | "ollama";
   base_url: string;
   api_key: string | null;
   model: string;
@@ -374,4 +374,8 @@ export async function listOllamaModels(baseUrl?: string): Promise<OllamaModel[]>
 
 export async function testLLMConnection(config: LLMConfig): Promise<string> {
   return invoke("test_llm_connection", { config });
+}
+
+export async function isLLMConfigured(): Promise<boolean> {
+  return invoke("is_llm_configured");
 }
