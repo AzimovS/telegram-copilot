@@ -16,6 +16,7 @@ interface BriefingViewProps {
 
 export function BriefingView({ onOpenChat }: BriefingViewProps) {
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
   const chatFilters = useSettingsStore((state) => state.chatFilters);
   const cacheTTL = useSettingsStore((state) => state.cacheTTL);
 
@@ -30,23 +31,40 @@ export function BriefingView({ onOpenChat }: BriefingViewProps) {
 
   // Load folders when selectedFolderIds changes
   useEffect(() => {
+    let cancelled = false;
+    setFoldersLoaded(false);
+
     if (chatFilters.selectedFolderIds.length > 0) {
       tauri.getFolders()
-        .then(setFolders)
-        .catch((err) => console.error("Failed to load folders:", err));
+        .then((f) => {
+          if (!cancelled) {
+            setFolders(f);
+            setFoldersLoaded(true);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load folders:", err);
+          if (!cancelled) setFoldersLoaded(true);
+        });
     } else {
       setFolders([]);
+      setFoldersLoaded(true);
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [chatFilters.selectedFolderIds]);
 
   // Load briefing when filters/folders/TTL change (dedup handled inside loadBriefing)
   useEffect(() => {
+    if (!foldersLoaded) return;
     const filters = chatFiltersFromSettings(chatFilters, folders);
     loadBriefing({
       filters,
       briefingTTLMinutes: cacheTTL.briefingTTLMinutes,
     });
-  }, [chatFilters, folders, cacheTTL.briefingTTLMinutes, loadBriefing]);
+  }, [chatFilters, folders, foldersLoaded, cacheTTL.briefingTTLMinutes, loadBriefing]);
 
   const handleRefresh = useCallback(() => {
     const filters = chatFiltersFromSettings(chatFilters, folders);

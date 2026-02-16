@@ -47,6 +47,7 @@ export function useSummaries(options: UseSummariesOptions) {
   const [regeneratingChatId, setRegeneratingChatId] = useState<number | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const isLoadingRef = useRef(false);
+  const prevSortByRef = useRef(sortBy);
 
   const {
     summaries,
@@ -366,8 +367,10 @@ export function useSummaries(options: UseSummariesOptions) {
     [summaries, cacheTTL.summaryTTLMinutes, summaryStore, chatStore]
   );
 
-  // Re-sort when sortBy changes
+  // Re-sort when sortBy changes (skip initial mount to avoid resetting lastLoadedAt)
   useEffect(() => {
+    if (prevSortByRef.current === sortBy) return;
+    prevSortByRef.current = sortBy;
     if (summaries.length > 0) {
       summaryStore.setSummaries(sortSummaries(summaries));
     }

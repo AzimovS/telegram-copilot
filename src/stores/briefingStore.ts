@@ -82,7 +82,11 @@ export const useBriefingStore = create<BriefingStore>((set, get) => ({
     });
   },
 
-  clear: () => set({ data: null, lastLoadedAt: null, lastFiltersHash: null, error: null }),
+  clear: () => {
+    briefingPromise = null;
+    loadGeneration = 0;
+    set({ data: null, lastLoadedAt: null, lastFiltersHash: null, error: null });
+  },
 
   loadBriefing: async ({ filters, force = false, briefingTTLMinutes }) => {
     const filtersHash = JSON.stringify(filters);
