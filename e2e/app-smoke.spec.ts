@@ -38,7 +38,17 @@ test.describe("App smoke tests", () => {
       settings: { onboardingCompleted: false },
     });
 
+    // Step 1: Chat filter step with Next button
+    await expect(page.getByText("Welcome to Telegram Copilot!")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Next/ })).toBeVisible();
+    await expect(page.getByText("Step 1 of 2")).toBeVisible();
+
+    // Navigate to step 2: AI provider step
+    await page.getByRole("button", { name: /Next/ }).click();
+    await expect(page.getByText("Set up AI Provider")).toBeVisible();
     await expect(page.getByRole("button", { name: /Get Started/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Skip/ })).toBeVisible();
+    await expect(page.getByText("Step 2 of 2")).toBeVisible();
   });
 
   test("navigates between all views", async ({ page }) => {

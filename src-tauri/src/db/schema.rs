@@ -62,6 +62,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), String> {
             last_message_date INTEGER NOT NULL,
             updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
         );
+
+        -- App settings (key-value store for config like LLM provider settings)
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
         "#,
     )
     .map_err(|e| format!("Failed to create tables: {}", e))?;

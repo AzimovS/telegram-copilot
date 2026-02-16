@@ -14,6 +14,7 @@ import {
   Check,
   Filter,
   Clock,
+  Brain,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useThemeStore, type Theme } from "@/stores/themeStore";
 import { ChatFiltersDialog } from "@/components/settings/ChatFiltersDialog";
 import { CacheSettingsDialog } from "@/components/settings/CacheSettingsDialog";
+import { AIProviderDialog } from "@/components/settings/AIProviderDialog";
 
 export type ViewType = "briefing" | "summary" | "chats" | "contacts" | "outreach" | "offboard";
 
@@ -53,6 +55,7 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
   const { theme, setTheme } = useThemeStore();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [cacheSettingsOpen, setCacheSettingsOpen] = useState(false);
+  const [aiProviderOpen, setAiProviderOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -143,12 +146,20 @@ export function NavHeader({ currentView, onViewChange }: NavHeaderProps) {
                     <Clock className="h-4 w-4" />
                     <span className="flex-1 text-left">Cache Settings</span>
                   </button>
+                  <button
+                    onClick={() => setAiProviderOpen(true)}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
+                  >
+                    <Brain className="h-4 w-4" />
+                    <span className="flex-1 text-left">AI Provider</span>
+                  </button>
                 </div>
               </div>
             </PopoverContent>
           </Popover>
           <ChatFiltersDialog open={filtersOpen} onOpenChange={setFiltersOpen} />
           <CacheSettingsDialog open={cacheSettingsOpen} onOpenChange={setCacheSettingsOpen} />
+          <AIProviderDialog open={aiProviderOpen} onOpenChange={setAiProviderOpen} />
           <Button
             variant="ghost"
             size="icon"
