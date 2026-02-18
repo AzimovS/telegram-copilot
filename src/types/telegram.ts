@@ -34,6 +34,7 @@ export interface Message {
   date: number;
   isOutgoing: boolean;
   isRead: boolean;
+  isMentioned: boolean;
 }
 
 export type MessageContent =

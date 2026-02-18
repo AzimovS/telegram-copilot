@@ -103,6 +103,8 @@ pub struct Message {
     pub date: i64,
     pub is_outgoing: bool,
     pub is_read: bool,
+    #[serde(default)]
+    pub is_mentioned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,6 +335,17 @@ impl TelegramClient {
 
     pub async fn get_current_user(&self) -> Option<User> {
         self.current_user.read().await.clone()
+    }
+
+    /// Check if a message text contains an @mention of the current user's username
+    fn text_mentions_username(text: &str, username: &Option<String>) -> bool {
+        if let Some(ref uname) = username {
+            if !uname.is_empty() {
+                let mention = format!("@{}", uname);
+                return text.to_lowercase().contains(&mention.to_lowercase());
+            }
+        }
+        false
     }
 
     /// Connect to Telegram and check if already authorized
@@ -698,6 +711,7 @@ impl TelegramClient {
         let _permit = self.dialog_semaphore.acquire().await
             .map_err(|e| format!("Failed to acquire semaphore: {}", e))?;
 
+        let my_username = self.current_user.read().await.as_ref().and_then(|u| u.username.clone());
         let filters = filters.unwrap_or_default();
         let mut dialogs = client.iter_dialogs();
         let mut chats = Vec::new();
@@ -760,6 +774,7 @@ impl TelegramClient {
                         date: msg.date().timestamp(),
                         is_outgoing: msg.outgoing(),
                         is_read: true,
+                        is_mentioned: Self::text_mentions_username(text, &my_username),
                     }
                 });
 
@@ -922,6 +937,7 @@ impl TelegramClient {
                     date: msg.date().timestamp(),
                     is_outgoing: msg.outgoing(),
                     is_read: true,
+                    is_mentioned: Self::text_mentions_username(text, &my_username),
                 }
             });
 
@@ -1064,6 +1080,7 @@ impl TelegramClient {
             }
         };
 
+        let my_username = self.current_user.read().await.as_ref().and_then(|u| u.username.clone());
         let client_guard = self.client.read().await;
         let client = client_guard.as_ref().ok_or("Client not connected")?;
 
@@ -1094,6 +1111,7 @@ impl TelegramClient {
                 date: msg.date().timestamp(),
                 is_outgoing: msg.outgoing(),
                 is_read: true,
+                is_mentioned: Self::text_mentions_username(text, &my_username),
             });
 
             count += 1;
@@ -1191,6 +1209,7 @@ impl TelegramClient {
             date: sent_msg.date().timestamp(),
             is_outgoing: true,
             is_read: false,
+            is_mentioned: false,
         };
 
         self.emit_event(TelegramEvent::NewMessage(message.clone()));

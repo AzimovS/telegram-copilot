@@ -215,6 +215,9 @@ async fn process_chat_for_briefing(
             .unwrap_or_default()
     });
 
+    // Compute whether user is mentioned in any message
+    let user_is_mentioned = chat.messages.iter().any(|m| m.is_mentioned);
+
     // Build user prompt
     let user_prompt = format_briefing_v2_user_prompt(
         &chat_title,
@@ -224,6 +227,7 @@ async fn process_chat_for_briefing(
         chat.has_unanswered_question,
         chat.hours_since_last_activity,
         chat.is_private_chat,
+        user_is_mentioned,
         &messages,
     );
 

@@ -30,6 +30,7 @@ test.describe("Briefing view", () => {
                 date: Math.floor(Date.now() / 1000),
                 isOutgoing: false,
                 isRead: false,
+                isMentioned: false,
               },
             ],
             error: null,
@@ -83,37 +84,20 @@ test.describe("Briefing view", () => {
                 date: Math.floor(Date.now() / 1000),
                 isOutgoing: false,
                 isRead: false,
+                isMentioned: false,
               },
             ],
             error: null,
           },
         ],
-        generate_briefing_v2: {
-          needs_response: [],
-          fyi_summaries: [
-            {
-              id: 2,
-              chat_id: 200,
-              chat_name: "Dev Group",
-              chat_type: "group",
-              unread_count: 15,
-              last_message: "New release published",
-              last_message_date: new Date().toISOString(),
-              priority: "fyi",
-              summary: "Team discussing new release",
-            },
-          ],
-          stats: { needs_response_count: 0, fyi_count: 1, total_unread: 15 },
-          generated_at: new Date().toISOString(),
-          cached: false,
-        },
       },
       settings: { onboardingCompleted: true },
     });
 
+    // Group chats with no mentions and no outgoing messages are auto-classified as FYI
     await expect(page.getByText("FYI (1)")).toBeVisible();
     await expect(page.getByText("Dev Group")).toBeVisible();
-    await expect(page.getByText("Team discussing new release")).toBeVisible();
+    await expect(page.getByText("15 new messages (no mentions of you)")).toBeVisible();
   });
 
   test("shows error on AI failure", async ({ page }) => {
@@ -135,6 +119,7 @@ test.describe("Briefing view", () => {
                 date: Math.floor(Date.now() / 1000),
                 isOutgoing: false,
                 isRead: false,
+                isMentioned: false,
               },
             ],
             error: null,
