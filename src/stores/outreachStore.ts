@@ -184,6 +184,10 @@ export const useOutreachStore = create<OutreachStore>((set, get) => ({
       activeQueue: null,
       isLoading: false,
       error: null,
+      inputMode: "contacts",
+      handleInput: "",
+      resolvedHandles: [],
+      isResolving: false,
     }),
 
   // Handles mode actions
