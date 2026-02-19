@@ -189,6 +189,81 @@ impl Default for OutreachManager {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveResult {
+    pub username: String,
+    pub status: String,       // "resolved", "not_found", "is_group", "is_channel", "error"
+    pub user_id: Option<i64>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn resolve_usernames(
+    client: State<'_, Arc<TelegramClient>>,
+    usernames: Vec<String>,
+) -> Result<Vec<ResolveResult>, String> {
+    log::info!("[Outreach] Resolving {} usernames", usernames.len());
+
+    let mut results = Vec::new();
+
+    for (i, username) in usernames.iter().enumerate() {
+        let clean = username.trim().trim_start_matches('@');
+        if clean.is_empty() {
+            continue;
+        }
+
+        match client.resolve_username(clean).await {
+            Ok(user) => {
+                results.push(ResolveResult {
+                    username: clean.to_string(),
+                    status: "resolved".to_string(),
+                    user_id: Some(user.user_id),
+                    first_name: Some(user.first_name),
+                    last_name: Some(user.last_name),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                let status = if error_str.contains("not a user") && error_str.contains("group") {
+                    "is_group"
+                } else if error_str.contains("not a user") && error_str.contains("channel") {
+                    "is_channel"
+                } else if error_str.contains("USERNAME_NOT_OCCUPIED") || error_str.contains("not found") {
+                    "not_found"
+                } else {
+                    "error"
+                };
+
+                results.push(ResolveResult {
+                    username: clean.to_string(),
+                    status: status.to_string(),
+                    user_id: None,
+                    first_name: None,
+                    last_name: None,
+                    error: Some(error_str),
+                });
+            }
+        }
+
+        // 500ms delay between resolutions to avoid rate limits
+        if i < usernames.len() - 1 {
+            sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    log::info!("[Outreach] Resolved {} usernames: {} success, {} failed",
+        results.len(),
+        results.iter().filter(|r| r.status == "resolved").count(),
+        results.iter().filter(|r| r.status != "resolved").count(),
+    );
+
+    Ok(results)
+}
+
 /// Extract flood wait seconds from error message
 fn extract_flood_wait_seconds(error_msg: &str) -> Option<u64> {
     // Look for patterns like "FLOOD_WAIT_60" or "wait for 60 seconds"
@@ -241,6 +316,7 @@ pub async fn queue_outreach_messages(
     rate_limiter: State<'_, Arc<RateLimiter>>,
     recipient_ids: Vec<i64>,
     template: String,
+    recipient_names: Option<Vec<(i64, String, String)>>,
 ) -> Result<String, String> {
     log::info!("[Outreach] Starting outreach to {} recipients", recipient_ids.len());
 
@@ -252,24 +328,41 @@ pub async fn queue_outreach_messages(
         return Err("Message template is empty".to_string());
     }
 
-    // Fetch contacts to get names for personalization
-    let contacts = client.get_contacts().await?;
-
     // Build recipient list with names
-    let recipients: Vec<OutreachRecipient> = recipient_ids
-        .iter()
-        .map(|&user_id| {
-            let contact = contacts.iter().find(|c| c.id == user_id);
-            OutreachRecipient {
-                user_id,
-                first_name: contact.map(|c| c.first_name.clone()).unwrap_or_default(),
-                last_name: contact.map(|c| c.last_name.clone()).unwrap_or_default(),
-                status: "pending".to_string(),
-                error: None,
-                sent_at: None,
-            }
-        })
-        .collect();
+    // If recipient_names provided (from handles mode), use those directly
+    // Otherwise fetch contacts for names (existing contacts mode)
+    let recipients: Vec<OutreachRecipient> = if let Some(names) = &recipient_names {
+        recipient_ids
+            .iter()
+            .map(|&user_id| {
+                let name_entry = names.iter().find(|(id, _, _)| *id == user_id);
+                OutreachRecipient {
+                    user_id,
+                    first_name: name_entry.map(|(_, f, _)| f.clone()).unwrap_or_default(),
+                    last_name: name_entry.map(|(_, _, l)| l.clone()).unwrap_or_default(),
+                    status: "pending".to_string(),
+                    error: None,
+                    sent_at: None,
+                }
+            })
+            .collect()
+    } else {
+        let contacts = client.get_contacts().await?;
+        recipient_ids
+            .iter()
+            .map(|&user_id| {
+                let contact = contacts.iter().find(|c| c.id == user_id);
+                OutreachRecipient {
+                    user_id,
+                    first_name: contact.map(|c| c.first_name.clone()).unwrap_or_default(),
+                    last_name: contact.map(|c| c.last_name.clone()).unwrap_or_default(),
+                    status: "pending".to_string(),
+                    error: None,
+                    sent_at: None,
+                }
+            })
+            .collect()
+    };
 
     // Create the queue
     let queue_id = manager.create_queue(recipients.clone(), template.clone()).await?;

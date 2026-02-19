@@ -8,6 +8,8 @@ pub struct ChatMessage {
     pub text: String,
     pub date: i64,
     pub is_outgoing: bool,
+    #[serde(default)]
+    pub is_mentioned: bool,
 }
 
 /// Chat context for briefing generation

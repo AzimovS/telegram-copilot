@@ -15,18 +15,20 @@ CLASSIFICATION RULES:
 **NEEDS_REPLY** - Someone is waiting for your response:
 - last_message_is_outgoing=false AND is_private_chat=true (they messaged you in DM)
 - has_unanswered_question=true (they asked a question you haven't answered)
+- user_is_mentioned=true (someone @mentioned you or replied to your message)
 - Clear requests: "can you", "please", "let me know", "waiting for", "need your"
 - You're directly addressed or asked for input
 
 **FYI** - No action needed:
 - last_message_is_outgoing=true (you already replied)
 - Channel broadcasts or announcements
-- Group discussions where you're not addressed
+- Group discussions where you're not addressed and user_is_mentioned=false
 - Automated messages or notifications
 - General news/updates
 
 IMPORTANT: If last_message_is_outgoing=true, it's almost always FYI (you already responded).
 If is_private_chat=true AND last_message_is_outgoing=false, it's almost always NEEDS_REPLY.
+If user_is_mentioned=true in a group chat, it's likely NEEDS_REPLY (someone specifically addressed you).
 
 Respond in JSON:
 {
@@ -85,6 +87,7 @@ pub fn format_briefing_v2_user_prompt(
     has_unanswered_question: bool,
     hours_since_last_activity: f64,
     is_private_chat: bool,
+    user_is_mentioned: bool,
     messages: &[(String, String)], // (sender_name, text)
 ) -> String {
     let messages_text: String = messages
@@ -102,6 +105,7 @@ SIGNALS:
 - has_unanswered_question: {}
 - hours_since_last_activity: {:.1}
 - is_private_chat: {}
+- user_is_mentioned: {}
 
 MESSAGES:
 {}"#,
@@ -112,6 +116,7 @@ MESSAGES:
         has_unanswered_question,
         hours_since_last_activity,
         is_private_chat,
+        user_is_mentioned,
         messages_text
     )
 }

@@ -160,8 +160,37 @@ export const useBriefingStore = create<BriefingStore>((set, get) => ({
         // Stale check after potentially slow network calls
         if (thisGeneration !== loadGeneration) return;
 
-        // Build chat contexts
-        const chatContexts = smallChats
+        // Pre-classify: group chats with no mentions and no outgoing messages
+        // are auto-classified as FYI (user is not involved in the conversation)
+        const uninvolvedGroups: Chat[] = [];
+        const chatsForAI: Chat[] = [];
+        for (const chat of smallChats) {
+          const msgs = messagesByChat[chat.id];
+          if (!msgs || msgs.length === 0) continue;
+          const isPrivate = chat.type === "private";
+          const hasOutgoing = msgs.some((m) => m.isOutgoing);
+          const hasMention = msgs.some((m) => m.isMentioned);
+          if (!isPrivate && !hasOutgoing && !hasMention) {
+            uninvolvedGroups.push(chat);
+          } else {
+            chatsForAI.push(chat);
+          }
+        }
+
+        const uninvolvedGroupFYIs: FYIItemData[] = uninvolvedGroups.map((chat: Chat, idx: number) => ({
+          id: Date.now() + 10000 + idx,
+          chat_id: chat.id,
+          chat_name: chat.title,
+          chat_type: chat.type === "channel" ? "channel" : "group",
+          unread_count: chat.unreadCount,
+          last_message: chat.lastMessage?.content.type === "text" ? chat.lastMessage.content.text : null,
+          last_message_date: chat.lastMessage ? new Date(chat.lastMessage.date * 1000).toISOString() : null,
+          priority: "fyi" as const,
+          summary: `${chat.unreadCount} new messages (no mentions of you)`,
+        }));
+
+        // Build chat contexts for chats that need AI classification
+        const chatContexts = chatsForAI
           .filter((chat: Chat) => (messagesByChat[chat.id]?.length ?? 0) > 0)
           .map((chat: Chat) => {
             const messages = messagesByChat[chat.id];
@@ -175,6 +204,7 @@ export const useBriefingStore = create<BriefingStore>((set, get) => ({
                 text: m.content.type === "text" ? m.content.text : "[Media]",
                 date: m.date,
                 is_outgoing: m.isOutgoing,
+                is_mentioned: m.isMentioned,
               })),
               unread_count: chat.unreadCount,
               last_message_is_outgoing: messages.length > 0 && messages[messages.length - 1].isOutgoing,
@@ -185,12 +215,13 @@ export const useBriefingStore = create<BriefingStore>((set, get) => ({
           });
 
         if (chatContexts.length === 0) {
-          const totalUnread = largeGroupFYIs.reduce((sum, item) => sum + item.unread_count, 0);
+          const allAutoFYIs = [...largeGroupFYIs, ...uninvolvedGroupFYIs];
+          const totalUnread = allAutoFYIs.reduce((sum, item) => sum + item.unread_count, 0);
           set({
             data: {
               needs_response: [],
-              fyi_summaries: largeGroupFYIs,
-              stats: { needs_response_count: 0, fyi_count: largeGroupFYIs.length, total_unread: totalUnread },
+              fyi_summaries: allAutoFYIs,
+              stats: { needs_response_count: 0, fyi_count: allAutoFYIs.length, total_unread: totalUnread },
               generated_at: new Date().toISOString(),
               cached: false,
             },
@@ -211,9 +242,9 @@ export const useBriefingStore = create<BriefingStore>((set, get) => ({
         // Stale check after AI call (the slowest part)
         if (thisGeneration !== loadGeneration) return;
 
-        // Merge large group FYIs with AI-generated FYIs
-        const mergedFYIs = [...result.fyi_summaries, ...largeGroupFYIs];
-        const largeGroupUnreadTotal = largeGroupFYIs.reduce((sum, item) => sum + item.unread_count, 0);
+        // Merge auto-classified FYIs with AI-generated FYIs
+        const mergedFYIs = [...result.fyi_summaries, ...largeGroupFYIs, ...uninvolvedGroupFYIs];
+        const autoFYIUnreadTotal = [...largeGroupFYIs, ...uninvolvedGroupFYIs].reduce((sum, item) => sum + item.unread_count, 0);
 
         set({
           data: {
@@ -222,7 +253,7 @@ export const useBriefingStore = create<BriefingStore>((set, get) => ({
             stats: {
               ...result.stats,
               fyi_count: mergedFYIs.length,
-              total_unread: result.stats.total_unread + largeGroupUnreadTotal,
+              total_unread: result.stats.total_unread + autoFYIUnreadTotal,
             },
           },
           lastLoadedAt: Date.now(),

@@ -76,7 +76,9 @@ pub async fn get_contacts(
         ..Default::default()
     };
 
-    let chats = client.get_chats(200, Some(private_filter)).await.unwrap_or_default();
+    // Fetch up to 2000 private chats so contacts get enriched with lastContactDate
+    // Previously limited to 200, which caused contacts beyond that to show as "Never contacted"
+    let chats = client.get_chats(2000, Some(private_filter)).await.unwrap_or_default();
 
     // Build a map of user_id -> (last_message_date, unread_count) from private chats
     let mut chat_data_map: HashMap<i64, (i64, i32)> = HashMap::new();

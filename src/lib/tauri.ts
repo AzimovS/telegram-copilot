@@ -187,9 +187,10 @@ export async function listScopes(): Promise<string[]> {
 // Outreach commands
 export async function queueOutreachMessages(
   recipientIds: number[],
-  template: string
+  template: string,
+  recipientNames?: [number, string, string][]
 ): Promise<string> {
-  return invoke("queue_outreach_messages", { recipientIds, template });
+  return invoke("queue_outreach_messages", { recipientIds, template, recipientNames });
 }
 
 export async function getOutreachStatus(queueId: string): Promise<unknown> {
@@ -198,6 +199,20 @@ export async function getOutreachStatus(queueId: string): Promise<unknown> {
 
 export async function cancelOutreach(queueId: string): Promise<void> {
   return invoke("cancel_outreach", { queueId });
+}
+
+// Resolve usernames
+export interface ResolveResult {
+  username: string;
+  status: "resolved" | "not_found" | "is_group" | "is_channel" | "error";
+  userId: number | null;
+  firstName: string | null;
+  lastName: string | null;
+  error: string | null;
+}
+
+export async function resolveUsernames(usernames: string[]): Promise<ResolveResult[]> {
+  return invoke("resolve_usernames", { usernames });
 }
 
 // Offboard commands

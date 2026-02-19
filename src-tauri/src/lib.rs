@@ -258,6 +258,7 @@ pub fn run() {
             outreach::queue_outreach_messages,
             outreach::get_outreach_status,
             outreach::cancel_outreach,
+            outreach::resolve_usernames,
             // Offboard commands
             offboard::get_common_groups,
             offboard::remove_from_group,
