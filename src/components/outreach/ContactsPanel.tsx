@@ -62,7 +62,7 @@ export function ContactsPanel({
   };
 
   return (
-    <div className="w-[350px] flex flex-col border-r overflow-hidden">
+    <div className="flex flex-col flex-1 overflow-hidden">
       {/* Filter Toolbar */}
       <div className="flex items-center gap-2 p-3 border-b">
         <div className="relative flex-1">

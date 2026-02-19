@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import * as tauri from "@/lib/tauri";
+import type { ResolveResult } from "@/lib/tauri";
 
 export interface OutreachRecipient {
   userId: number;
@@ -22,6 +23,17 @@ export interface OutreachQueue {
   failedCount: number;
 }
 
+export type InputMode = "contacts" | "handles";
+
+export interface ResolvedHandle {
+  username: string;
+  status: ResolveResult["status"];
+  userId: number | null;
+  firstName: string | null;
+  lastName: string | null;
+  error: string | null;
+}
+
 interface OutreachStore {
   template: string;
   selectedRecipientIds: number[];
@@ -29,6 +41,12 @@ interface OutreachStore {
   queues: OutreachQueue[];
   isLoading: boolean;
   error: string | null;
+
+  // Handles mode state
+  inputMode: InputMode;
+  handleInput: string;
+  resolvedHandles: ResolvedHandle[];
+  isResolving: boolean;
 
   // Actions
   setTemplate: (template: string) => void;
@@ -41,11 +59,27 @@ interface OutreachStore {
   clearError: () => void;
   reset: () => void;
 
+  // Handles mode actions
+  setInputMode: (mode: InputMode) => void;
+  setHandleInput: (input: string) => void;
+  resolveHandles: () => Promise<void>;
+  removeResolvedHandle: (username: string) => void;
+  clearResolvedHandles: () => void;
+  startOutreachFromHandles: () => Promise<void>;
+
   // Template helpers
   previewMessage: (
     recipientId: number,
     contacts: { userId: number; firstName: string; lastName: string }[]
   ) => string;
+}
+
+function parseHandleInput(input: string): string[] {
+  // Split by newlines, commas, whitespace; strip @, deduplicate, validate
+  const raw = input.split(/[\n,\s]+/).filter(Boolean);
+  const cleaned = raw.map((h) => h.trim().replace(/^@/, ""));
+  const unique = [...new Set(cleaned)];
+  return unique.filter((h) => /^[a-zA-Z0-9_]{4,32}$/.test(h));
 }
 
 export const useOutreachStore = create<OutreachStore>((set, get) => ({
@@ -55,6 +89,12 @@ export const useOutreachStore = create<OutreachStore>((set, get) => ({
   queues: [],
   isLoading: false,
   error: null,
+
+  // Handles mode defaults
+  inputMode: "contacts",
+  handleInput: "",
+  resolvedHandles: [],
+  isResolving: false,
 
   setTemplate: (template) => set({ template }),
 
@@ -145,6 +185,80 @@ export const useOutreachStore = create<OutreachStore>((set, get) => ({
       isLoading: false,
       error: null,
     }),
+
+  // Handles mode actions
+
+  setInputMode: (mode) => set({ inputMode: mode }),
+
+  setHandleInput: (input) => set({ handleInput: input }),
+
+  resolveHandles: async () => {
+    const { handleInput } = get();
+    const usernames = parseHandleInput(handleInput);
+
+    if (usernames.length === 0) {
+      set({ error: "No valid usernames found. Usernames must be 4-32 characters (letters, numbers, underscores)." });
+      return;
+    }
+
+    set({ isResolving: true, error: null });
+    try {
+      const results = await tauri.resolveUsernames(usernames);
+      set({ resolvedHandles: results });
+    } catch (error) {
+      set({ error: String(error) });
+    } finally {
+      set({ isResolving: false });
+    }
+  },
+
+  removeResolvedHandle: (username) => {
+    set((state) => ({
+      resolvedHandles: state.resolvedHandles.filter(
+        (h) => h.username !== username
+      ),
+    }));
+  },
+
+  clearResolvedHandles: () => set({ resolvedHandles: [], handleInput: "" }),
+
+  startOutreachFromHandles: async () => {
+    const { template, resolvedHandles } = get();
+
+    const sendable = resolvedHandles.filter(
+      (h) => h.status === "resolved" && h.userId != null
+    );
+
+    if (!template.trim() || sendable.length === 0) {
+      set({ error: "Template and at least one resolved user are required" });
+      return;
+    }
+
+    const recipientIds = sendable.map((h) => h.userId!);
+    const recipientNames: [number, string, string][] = sendable.map((h) => [
+      h.userId!,
+      h.firstName || "",
+      h.lastName || "",
+    ]);
+
+    set({ isLoading: true, error: null });
+    try {
+      const queueId = await tauri.queueOutreachMessages(
+        recipientIds,
+        template,
+        recipientNames
+      );
+      const status = (await tauri.getOutreachStatus(queueId)) as OutreachQueue;
+      set({
+        activeQueue: status,
+        queues: [...get().queues, status],
+      });
+    } catch (error) {
+      set({ error: String(error) });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
   previewMessage: (recipientId, contacts) => {
     const { template } = get();

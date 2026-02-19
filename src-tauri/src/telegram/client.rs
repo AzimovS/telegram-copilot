@@ -152,6 +152,17 @@ pub struct BatchMessageResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedUser {
+    pub user_id: i64,
+    pub access_hash: i64,
+    pub first_name: String,
+    pub last_name: String,
+    pub username: String,
+    pub is_bot: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommonChat {
     pub id: i64,
@@ -1214,6 +1225,121 @@ impl TelegramClient {
 
         self.emit_event(TelegramEvent::NewMessage(message.clone()));
         Ok(message)
+    }
+
+    /// Resolve a @username to a user (with auto-reconnect on connection failure)
+    pub async fn resolve_username(&self, username: &str) -> Result<ResolvedUser, String> {
+        log::info!("Resolving username: @{}", username);
+
+        match self.resolve_username_inner(username).await {
+            Ok(user) => Ok(user),
+            Err(e) if Self::is_connection_error(&e) => {
+                log::warn!("Connection error resolving username, attempting reconnect: {}", e);
+                self.reconnect().await?;
+                self.resolve_username_inner(username).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn resolve_username_inner(&self, username: &str) -> Result<ResolvedUser, String> {
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or("Client not connected")?;
+
+        let result = client
+            .invoke(&tl::functions::contacts::ResolveUsername {
+                username: username.to_string(),
+            })
+            .await
+            .map_err(|e| format!("Failed to resolve @{}: {}", username, e))?;
+
+        let tl::enums::contacts::ResolvedPeer::Peer(resolved) = result;
+
+        // Verify the peer is a user (not a channel/group)
+        match resolved.peer {
+            tl::enums::Peer::User(peer_user) => {
+                // Find the user in the response's users list
+                let user = resolved.users.into_iter().find_map(|u| {
+                    if let tl::enums::User::User(user) = u {
+                        if user.id == peer_user.user_id {
+                            Some(user)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }).ok_or_else(|| format!("User data not found in response for @{}", username))?;
+
+                let access_hash = user.access_hash.unwrap_or(0);
+                // ResolveUsername may return a "min" user where flags like bot are unreliable.
+                // Use it as initial value, then override from GetUsers (full user data).
+                let mut is_bot = user.bot;
+                let mut first_name = user.first_name.clone().unwrap_or_default();
+                let mut last_name = user.last_name.clone().unwrap_or_default();
+
+                // Insert into chat_cache so send_message can find them later.
+                // Also read the full user's bot flag from GetUsers response.
+                let input_user = tl::types::InputUser {
+                    user_id: user.id,
+                    access_hash,
+                };
+                match client.invoke(&tl::functions::users::GetUsers {
+                    id: vec![tl::enums::InputUser::User(input_user)],
+                }).await {
+                    Ok(users_result) => {
+                        for tl_user in users_result {
+                            if let tl::enums::User::User(ref u) = tl_user {
+                                if u.id == user.id {
+                                    // Use full user data for bot flag and names
+                                    is_bot = u.bot;
+                                    if let Some(ref f) = u.first_name {
+                                        first_name = f.clone();
+                                    }
+                                    if let Some(ref l) = u.last_name {
+                                        last_name = l.clone();
+                                    }
+                                    log::info!("GetUsers for @{}: bot={}", username, u.bot);
+
+                                    let packed = grammers_client::types::chat::PackedChat {
+                                        ty: grammers_session::PackedType::User,
+                                        id: u.id,
+                                        access_hash: u.access_hash,
+                                    };
+                                    match client.unpack_chat(packed).await {
+                                        Ok(chat) => {
+                                            self.chat_cache.write().await.insert(u.id, chat);
+                                            log::info!("Cached resolved user @{} (id: {}) in chat_cache", username, u.id);
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Failed to unpack chat for @{}: {}", username, e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to get user entity for caching @{}: {}", username, e);
+                    }
+                }
+
+                Ok(ResolvedUser {
+                    user_id: user.id,
+                    access_hash,
+                    first_name,
+                    last_name,
+                    username: user.username.unwrap_or_else(|| username.to_string()),
+                    is_bot,
+                })
+            }
+            tl::enums::Peer::Chat(_) => {
+                Err(format!("@{} is a group chat, not a user", username))
+            }
+            tl::enums::Peer::Channel(_) => {
+                Err(format!("@{} is a channel/supergroup, not a user", username))
+            }
+        }
     }
 
     /// Get contacts (with auto-reconnect on connection failure)
