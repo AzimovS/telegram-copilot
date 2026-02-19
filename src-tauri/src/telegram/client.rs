@@ -1243,18 +1243,34 @@ impl TelegramClient {
 
         let mut users = Vec::new();
 
-        if let tl::enums::contacts::Contacts::Contacts(contacts) = contacts {
-            for user in contacts.users {
-                if let tl::enums::User::User(u) = user {
-                    users.push(User {
-                        id: u.id,
-                        first_name: u.first_name.unwrap_or_default(),
-                        last_name: u.last_name.unwrap_or_default(),
-                        username: u.username,
-                        phone_number: u.phone,
-                        profile_photo_url: None,
-                    });
+        match contacts {
+            tl::enums::contacts::Contacts::Contacts(contacts) => {
+                let mut empty_count = 0;
+                for user in contacts.users {
+                    match user {
+                        tl::enums::User::User(u) => {
+                            users.push(User {
+                                id: u.id,
+                                first_name: u.first_name.unwrap_or_default(),
+                                last_name: u.last_name.unwrap_or_default(),
+                                username: u.username,
+                                phone_number: u.phone,
+                                profile_photo_url: None,
+                            });
+                        }
+                        tl::enums::User::Empty(e) => {
+                            empty_count += 1;
+                            log::warn!("Contact user {} returned as Empty, skipping", e.id);
+                        }
+                    }
                 }
+                if empty_count > 0 {
+                    log::warn!("{} contacts were empty/deleted and excluded", empty_count);
+                }
+                log::info!("Fetched {} contacts from Telegram", users.len());
+            }
+            tl::enums::contacts::Contacts::NotModified => {
+                log::warn!("contacts.GetContacts returned NotModified with hash=0, returning empty list");
             }
         }
 
