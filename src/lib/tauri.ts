@@ -373,6 +373,7 @@ export interface OllamaModel {
   name: string;
   size: number | null;
   modified_at: string | null;
+  parameter_size: string | null;
 }
 
 export async function getLLMConfig(): Promise<LLMConfig> {

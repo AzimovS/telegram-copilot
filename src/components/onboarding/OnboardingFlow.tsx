@@ -4,7 +4,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { updateLLMConfig, type LLMConfig } from "@/lib/tauri";
 import { ChatFilterStep } from "./ChatFilterStep";
 import { AIProviderStep } from "./AIProviderStep";
-import { ArrowRight, ArrowLeft, SkipForward } from "lucide-react";
+import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const TOTAL_STEPS = 2;
 
@@ -21,7 +21,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const handleComplete = async () => {
     setSaving(true);
     try {
-      // Save AI config if the user provided one (didn't skip)
+      // Save AI config if the user configured one
       if (aiConfigRef.current) {
         await updateLLMConfig(aiConfigRef.current);
       }
@@ -35,12 +35,6 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleSkipAI = () => {
-    aiConfigRef.current = null;
-    completeOnboarding();
-    onComplete();
   };
 
   return (
@@ -83,13 +77,6 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           )}
 
           <div className="flex gap-2">
-            {step === TOTAL_STEPS && (
-              <Button variant="ghost" onClick={handleSkipAI}>
-                Skip
-                <SkipForward className="ml-2 h-4 w-4" />
-              </Button>
-            )}
-
             {step < TOTAL_STEPS ? (
               <Button onClick={() => setStep(step + 1)} size="lg">
                 Next

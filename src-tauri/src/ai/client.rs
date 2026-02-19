@@ -296,6 +296,7 @@ pub async fn list_ollama_models(base_url: &str) -> Result<Vec<OllamaModel>, Stri
             name: m.name,
             size: m.size,
             modified_at: m.modified_at,
+            parameter_size: m.details.and_then(|d| d.parameter_size),
         })
         .collect())
 }
@@ -306,6 +307,7 @@ pub struct OllamaModel {
     pub name: String,
     pub size: Option<u64>,
     pub modified_at: Option<String>,
+    pub parameter_size: Option<String>,
 }
 
 /// Internal: Ollama /api/tags response
@@ -320,6 +322,13 @@ struct OllamaTagModel {
     name: String,
     size: Option<u64>,
     modified_at: Option<String>,
+    details: Option<OllamaModelDetails>,
+}
+
+/// Internal: nested details from Ollama /api/tags
+#[derive(Debug, Deserialize)]
+struct OllamaModelDetails {
+    parameter_size: Option<String>,
 }
 
 /// Extract a JSON object from LLM output that may contain markdown fences or extra text.
