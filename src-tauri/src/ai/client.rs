@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 /// LLM provider type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,6 +40,7 @@ pub struct LLMClient {
     client_ollama: Client,
     config: RwLock<LLMConfig>,
     ollama_semaphore: Arc<Semaphore>,
+    cancel_token: CancellationToken,
 }
 
 /// Retry configuration
@@ -63,6 +65,7 @@ impl LLMClient {
             client_ollama,
             config: RwLock::new(config),
             ollama_semaphore: Arc::new(Semaphore::new(2)),
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -90,6 +93,16 @@ impl LLMClient {
         self.config.read().await.clone()
     }
 
+    /// Cancel all in-flight requests (drops HTTP futures, closing TCP connections)
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
+    }
+
+    /// Check if cancellation has been requested
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_token.is_cancelled()
+    }
+
     /// Make a chat completion request with retry logic
     pub async fn chat_completion(
         &self,
@@ -98,6 +111,10 @@ impl LLMClient {
         max_tokens: i32,
         json_response: bool,
     ) -> Result<String, String> {
+        if self.cancel_token.is_cancelled() {
+            return Err("Request cancelled".to_string());
+        }
+
         if !self.is_configured().await {
             return Err("LLM not configured: API key required for OpenAI".to_string());
         }
@@ -141,6 +158,10 @@ impl LLMClient {
         let mut delay_ms = INITIAL_RETRY_DELAY_MS;
 
         for attempt in 0..MAX_RETRIES {
+            if self.cancel_token.is_cancelled() {
+                return Err("Request cancelled".to_string());
+            }
+
             match self.make_request(&config, &request).await {
                 Ok(content) => return Ok(content),
                 Err(e) => {
@@ -154,7 +175,10 @@ impl LLMClient {
                             e,
                             delay_ms
                         );
-                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(delay_ms)) => {},
+                            _ = self.cancel_token.cancelled() => return Err("Request cancelled".to_string()),
+                        };
                         delay_ms *= 2;
                     } else {
                         log::error!(
@@ -200,11 +224,11 @@ impl LLMClient {
             }
         }
 
-        let response = req
-            .json(request)
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+        let send_future = req.json(request).send();
+        let response = tokio::select! {
+            result = send_future => result.map_err(|e| format!("Request failed: {}", e))?,
+            _ = self.cancel_token.cancelled() => return Err("Request cancelled".to_string()),
+        };
 
         let status = response.status();
 

@@ -44,6 +44,7 @@ pub async fn generate_briefing_v2(
             generated_at: Utc::now().to_rfc3339(),
             cached: false,
             cache_age: None,
+            cancelled: false,
         });
     }
 
@@ -59,6 +60,7 @@ pub async fn generate_briefing_v2(
             return Ok(BriefingV2Response {
                 cached: true,
                 cache_age: Some(format_cache_age(age_secs)),
+                cancelled: false,
                 ..cached_response
             });
         }
@@ -69,6 +71,9 @@ pub async fn generate_briefing_v2(
     let mut handles = vec![];
 
     for (idx, chat) in chats.iter().enumerate() {
+        if client.is_cancelled() {
+            break;
+        }
         let client = client.clone();
         let chat = chat.clone();
         let handle = tokio::spawn(async move {
@@ -101,6 +106,8 @@ pub async fn generate_briefing_v2(
         }
     }
 
+    let cancelled = client.is_cancelled();
+
     // Sort: urgent first, then needs_reply
     needs_response.sort_by(|a, b| {
         let priority_order = |p: &str| match p {
@@ -122,6 +129,7 @@ pub async fn generate_briefing_v2(
         generated_at: Utc::now().to_rfc3339(),
         cached: false,
         cache_age: None,
+        cancelled,
     };
 
     // Store in cache
@@ -316,6 +324,7 @@ pub async fn generate_batch_summaries(
             total_count: 0,
             generated_at: Utc::now().timestamp(),
             cached: false,
+            cancelled: false,
         });
     }
 
@@ -330,6 +339,7 @@ pub async fn generate_batch_summaries(
             log::info!("Returning cached summaries (age: {}s)", age_secs);
             return Ok(BatchSummaryResponse {
                 cached: true,
+                cancelled: false,
                 ..cached_response
             });
         }
@@ -340,6 +350,9 @@ pub async fn generate_batch_summaries(
     let mut handles = vec![];
 
     for chat in chats.iter() {
+        if client.is_cancelled() {
+            break;
+        }
         let client = client.clone();
         let chat = chat.clone();
         let handle = tokio::spawn(async move {
@@ -361,11 +374,14 @@ pub async fn generate_batch_summaries(
         }
     }
 
+    let cancelled = client.is_cancelled();
+
     let response = BatchSummaryResponse {
         summaries: summaries.clone(),
         total_count: summaries.len() as i32,
         generated_at: Utc::now().timestamp(),
         cached: false,
+        cancelled,
     };
 
     // Store in cache
@@ -472,6 +488,10 @@ pub async fn generate_draft(
     messages: Vec<DraftMessage>,
 ) -> Result<DraftResponse, String> {
     log::info!("Generating draft for chat {} ({})", chat_id, chat_title);
+
+    if client.is_cancelled() {
+        return Err("Request cancelled".to_string());
+    }
 
     if messages.is_empty() {
         return Ok(DraftResponse {

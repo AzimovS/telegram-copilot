@@ -144,7 +144,9 @@ pub fn run() {
     let summary_cache = Arc::new(SummaryCache::new());
     let contacts_cache = Arc::new(ContactsCache::new());
 
-    tauri::Builder::default()
+    let llm_for_shutdown = llm_client.clone();
+
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(telegram_client.clone())
         .manage(outreach_manager.clone())
@@ -272,6 +274,13 @@ pub fn run() {
             ai_commands::test_llm_connection,
             ai_commands::is_llm_configured,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(move |_app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            log::info!("App exiting, cancelling in-flight AI requests");
+            llm_for_shutdown.cancel();
+        }
+    });
 }

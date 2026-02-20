@@ -156,6 +156,7 @@ pub struct BriefingV2Response {
     pub generated_at: String,
     pub cached: bool,
     pub cache_age: Option<String>,
+    pub cancelled: bool,
 }
 
 // ============================================================================
@@ -184,6 +185,7 @@ pub struct BatchSummaryResponse {
     pub total_count: i32,
     pub generated_at: i64,
     pub cached: bool,
+    pub cancelled: bool,
 }
 
 // ============================================================================

@@ -309,6 +309,7 @@ export interface BriefingV2Response {
   generated_at: string;
   cached: boolean;
   cache_age?: string;
+  cancelled: boolean;
 }
 
 export interface ChatSummaryResult {
@@ -329,6 +330,7 @@ export interface BatchSummaryResponse {
   total_count: number;
   generated_at: number;
   cached: boolean;
+  cancelled: boolean;
 }
 
 export interface DraftResponse {

@@ -36,6 +36,7 @@ grammers-tl-types = "0.7"
 # Async utilities
 async-trait = "0.1"
 futures = "0.3"
+tokio-util = "0.7"
 
 # Environment
 dotenvy = "0.15"
