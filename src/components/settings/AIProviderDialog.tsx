@@ -23,13 +23,6 @@ export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) 
   const formRef = useRef<AIProviderFormHandle>(null);
   const [saving, setSaving] = useState(false);
 
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) {
-      formRef.current?.loadConfig();
-    }
-    onOpenChange(nextOpen);
-  };
-
   const handleApply = async () => {
     const config = formRef.current?.getConfig();
     if (!config) return;
@@ -45,7 +38,7 @@ export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) 
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>AI Provider</DialogTitle>
@@ -54,7 +47,7 @@ export function AIProviderDialog({ open, onOpenChange }: AIProviderDialogProps) 
           </DialogDescription>
         </DialogHeader>
 
-        <AIProviderForm ref={formRef} variant="compact" loadOnMount={false} />
+        <AIProviderForm ref={formRef} variant="compact" />
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>

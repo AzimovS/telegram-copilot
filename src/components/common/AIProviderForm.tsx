@@ -71,6 +71,7 @@ export const AIProviderForm = forwardRef<AIProviderFormHandle, AIProviderFormPro
     const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
     const [testMessage, setTestMessage] = useState("");
     const [envKeyDetected, setEnvKeyDetected] = useState(false);
+    const [configLoading, setConfigLoading] = useState(loadOnMount);
 
     // Remember per-provider field values so switching back restores them
     const savedFields = useRef<Record<string, { baseUrl: string; model: string; apiKey: string }>>({
@@ -86,6 +87,7 @@ export const AIProviderForm = forwardRef<AIProviderFormHandle, AIProviderFormPro
     });
 
     const loadConfig = async () => {
+      setConfigLoading(true);
       setTestStatus("idle");
       setTestMessage("");
       try {
@@ -94,7 +96,7 @@ export const AIProviderForm = forwardRef<AIProviderFormHandle, AIProviderFormPro
         setBaseUrl(config.base_url);
         setModel(config.model);
         if (config.provider === "ollama") {
-          fetchOllamaModels(config.base_url);
+          fetchOllamaModels(config.base_url, config.model);
         }
         if (config.api_key && config.api_key !== "") {
           setEnvKeyDetected(true);
@@ -102,6 +104,8 @@ export const AIProviderForm = forwardRef<AIProviderFormHandle, AIProviderFormPro
         }
       } catch (e) {
         console.error("Failed to load LLM config:", e);
+      } finally {
+        setConfigLoading(false);
       }
 
       try {
@@ -134,7 +138,7 @@ export const AIProviderForm = forwardRef<AIProviderFormHandle, AIProviderFormPro
       onConfigChange?.(buildConfig());
     }, [provider, baseUrl, apiKey, model]);
 
-    const fetchOllamaModels = async (url?: string) => {
+    const fetchOllamaModels = async (url?: string, expectedModel?: string) => {
       setLoadingModels(true);
       setOllamaError(null);
       try {
@@ -142,7 +146,8 @@ export const AIProviderForm = forwardRef<AIProviderFormHandle, AIProviderFormPro
         // Filter out embedding models — they can't generate text
         const models = allModels.filter((m) => !m.name.includes("embed"));
         setOllamaModels(models);
-        if (models.length > 0 && !models.some((m) => m.name === model)) {
+        const target = expectedModel ?? model;
+        if (models.length > 0 && !models.some((m) => m.name === target)) {
           setModel(models[0].name);
         }
       } catch (e) {
@@ -197,6 +202,16 @@ export const AIProviderForm = forwardRef<AIProviderFormHandle, AIProviderFormPro
       ) : (
         children
       );
+
+    if (configLoading) {
+      return (
+        <div className={isCard ? "space-y-4 max-h-[60vh] overflow-y-auto pr-2" : "space-y-4 py-4"}>
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className={isCard ? "space-y-4 max-h-[60vh] overflow-y-auto pr-2" : "space-y-4 py-4"}>
